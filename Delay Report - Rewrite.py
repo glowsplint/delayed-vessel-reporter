@@ -20,8 +20,7 @@ class G2Extractor:
                                                     errors='coerce',
                                                     format='%d.%m.%Y').max().date().strftime('%d.%m.%Y'),
                                      parse_dates=True)
-                            .query(f"`Fwd Agent` in {['G2OCEAN']}")
-                            .replace({'Fwd Agent': carrier_mapping}))
+                            .query(f"`Fwd Agent` in {['G2OCEAN']}"))
         self.g2_port_map = {
             'AUPTJ': 'Portland',
             'AUNTL': 'Newcastle',
@@ -150,7 +149,7 @@ class DelayReport:
         # Output the excel file
         self.saved_file = f"Vessel Delay Tracking - {datetime.today().strftime('%d.%m.%Y')}.xlsx"
         self.main_delay_sheet.to_excel(self.saved_file, index=False)
-        os.startfile(saved_file)
+        os.startfile(self.saved_file)
 
 
 # Delay report skeleton
