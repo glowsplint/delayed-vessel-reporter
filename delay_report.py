@@ -134,7 +134,8 @@ class MSCExtractor:
                 response = get_schedules(first_day, int(
                     row.pol_code), int(row.pod_code))
                 self.response_jsons.append(response.json())
-                write_json(response.json(), response_filename)
+                if len(response.json()):
+                    write_json(response.json(), response_filename)
                 time.sleep(random.randint(*self.interval))
             else:
                 with open(response_filename, 'r') as f:
@@ -156,9 +157,8 @@ class MSCExtractor:
 
         self.response_df = pd.DataFrame(([get_relevant_fields(response, i)
                                           for response in self.response_jsons
-                                          for i in range(len(response[0]['Sailings']))
                                           if len(response)
-                                          ]))
+                                          for i in range(len(response[0]['Sailings']))]))
 
         # Create reverse mapping from port_code to name
         msc_port_id_reversed = {v: k for k, v in self.msc_port_id.items()}
@@ -248,6 +248,14 @@ class DelayReport:
     """
 
     def __init__(self):
+        # Setup
+        self.config = {}
+        self.carrier_mapping = {}
+        self.bs_extractor = None
+        self.msc_extractor = None
+        self.g2_extractor = None
+        self.saved_file = ''
+
         # Read configurations
         read_config(self, 'config', 'data/config.json')
 
@@ -311,16 +319,19 @@ class DelayReport:
 
     def run_msc(self):
         if self.config.get('run_msc'):
+            print('Preparing for MSC extraction...')
             self.msc_extractor = MSCExtractor(
                 self.clean_delay_sheet, self.interval)
             self.msc_extractor.get_countryID()
             self.msc_extractor.prepare()
+            print('Extracting MSC information from their website...')
             self.msc_extractor.call_api()
             self.msc_extractor.extract()
             self.main_delay_sheet.update(self.msc_extractor.delay_sheet)
 
     def run_g2(self):
         if self.config.get('run_g2'):
+            print('Extracting G2Schedules...')
             self.g2_extractor = G2Extractor(self.config.get(
                 'g2_filename'), self.clean_delay_sheet)
             self.g2_extractor.extract()
@@ -348,16 +359,19 @@ class DelayReport:
         os.startfile(Path('../../' + self.saved_file))
 
 # Utility functions
+
+
 def write_json(response: dict, output_file: str):
     with open(output_file, 'w') as w:
         json.dump(response, w, indent=2)
+
 
 def read_config(instance: object, attr_name: str, path_to_config: str):
     with open(path_to_config, "r") as f:
         setattr(instance, attr_name, json.load(f))
 
+
 if __name__ == "__main__":
-    # Delay report skeleton
     delay_report = DelayReport()
     delay_report.run_bs()
     delay_report.run_msc()

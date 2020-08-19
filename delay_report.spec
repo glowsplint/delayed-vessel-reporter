@@ -3,7 +3,7 @@
 block_cipher = None
 
 
-a = Analysis(['Delay Report - Rewrite.py'],
+a = Analysis(['delay_report.py'],
              pathex=['C:\\Users\\Tym.Teo\\Documents\\Delay Report - Rewrite'],
              binaries=[],
              datas=[],
@@ -23,7 +23,7 @@ exe = EXE(pyz,
           a.zipfiles,
           a.datas,
           [],
-          name='Delay Report - Rewrite',
+          name='delay_report',
           debug=False,
           bootloader_ignore_signals=False,
           strip=False,
