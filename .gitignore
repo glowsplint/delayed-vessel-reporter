@@ -2,6 +2,7 @@ dist
 build
 __pycache__
 .ipynb_checkpoints
+responses
 
 Vessel Delay Tracking.XLSX
 Vessel Delay Tracking - *.xlsx

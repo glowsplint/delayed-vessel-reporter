@@ -3,5 +3,7 @@
   "run_msc": true,
   "run_g2": true,
   "g2_filename": "G2 Schedule.xlsx",
-  "delay_filename": "Vessel Delay Tracking.xlsx"
+  "delay_filename": "Vessel Delay Tracking.xlsx",
+  "randomiser_lower_interval": 2,
+  "randomiser_upper_interval": 5
 }
