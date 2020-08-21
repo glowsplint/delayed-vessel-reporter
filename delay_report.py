@@ -44,8 +44,8 @@ class MSCExtractor:
                             .copy())
 
         # Get the MSC-specific port names from the UNLOCODEs
-        self.port_mapping = {v['Port Code']: v['MSC Port Name'] for k, v in (pd.read_excel('../../data/MSC Port Code Mapping.xlsx')
-                                                                             .to_dict('index').items())}
+        self.port_mapping = {v['Port Code']: v['Port Name'] for k, v in (pd.read_excel('../../data/MSC Port Code Mapping.xlsx')
+                                                                         .to_dict('index').items())}
 
         # Get port name
         self.delay_sheet = self.delay_sheet.assign(pol_name=lambda x: x['Port of Loading'].apply(lambda y: self.port_mapping.get(y)),
@@ -71,8 +71,8 @@ class MSCExtractor:
                 if len(response.json()):
                     return response.json()[0].get('id')
 
-            msc_locations = list(self.delay_sheet.pol_name.unique(
-            )) + list(self.delay_sheet.pod_name.unique())
+            msc_locations = (list(self.delay_sheet.pol_name.unique())
+                             + list(self.delay_sheet.pod_name.unique()))
             location_code_responses = {location: query_id(
                 location) for location in tqdm(msc_locations)}
             self.msc_port_id = {k: get_id(v)
@@ -122,8 +122,7 @@ class MSCExtractor:
                 'Accept-Language': 'en-GB,en;q=0.9',
                 'Cookie': 'CMSPreferredCulture=en-GB; ASP.NET_SessionId=tht5lkut0asln2goiskoagfe; UrlReferrer=https://www.google.com/; CurrentContact=8b0b2fea-705b-4a4f-b8bf-bb1cd6c982bc; MSCAgencyId=115867; BIGipServerkentico.app~kentico_pool=439883018.20480.0000; _ga=GA1.2.1736073830.1597290148; _gid=GA1.2.1289141279.1597290148; _gcl_au=1.1.345060449.1597290148; __hstc=100935006.13bb76c8a78a8d0a203a993ffef3a3f6.1597290148282.1597290148282.1597290148282.1; hubspotutk=13bb76c8a78a8d0a203a993ffef3a3f6; __hssrc=1; _ym_uid=15972901491036911544; _ym_d=1597290149; _ym_isad=1; newsletter-signup-cookie=temp-hidden; _hjid=3e183004-f562-4048-8b60-daccdf9c187c; _hjUserAttributesHash=2c3b62a0e1cd48bdfd4d01b922060e19; _hjCachedUserAttributes={"attributes":{"mscAgencyId":"115867"},"userId":null}; OptanonAlertBoxClosed=2020-08-13T03:42:45.080Z; CMSCookieLevel=200; VisitorStatus=11062214903; TS0142aef9=0192b4b6225179b1baa3b4d270b71a4eee782a0192338173beabaa471f306c2a13fe854bf6a7ac08ac21924991864aa7728c54559023beabd273d82285d5f943202adb58da417d61813232e89b240828c090f890c6a74dc4adfec38513d13447be4b5b4404d69f964987b7917f731b858f0c9880a139994b98397c4aeb5bd60b0d0e38ec9e5f3c97b13fb184b4e068506e6086954f8a515f2b7239d2e5c1b9c70f61ca74f736355c58648a6036e9b5d06412389ac41221c5cb740df99c84dc2bfef4a530dbc5e2577c189212eebac723d9ee9f98030f4bc6ca7d824ab313ae5fdd1eaa9886; OptanonConsent=isIABGlobal=false&datestamp=Thu+Aug+13+2020+11%3A43%3A36+GMT%2B0800+(Singapore+Standard+Time)&version=5.9.0&landingPath=NotLandingPage&groups=1%3A1%2C2%3A1%2C3%3A1%2C4%3A1%2C0_53017%3A1%2C0_53020%3A1%2C0_53018%3A1%2C0_53019%3A1%2C101%3A1&AwaitingReconsent=false'
             }
-            response = self.session.get(url, headers=headers)
-            return response
+            return self.session.get(url, headers=headers)
 
         self.response_jsons = []
         first_day = datetime.today().replace(day=1).strftime('%Y-%m-%d')
@@ -200,8 +199,8 @@ class G2Extractor:
             Path('../../' + g2_file), skiprows=9, index_col='Unnamed: 0')
         self.delay_sheet = main_delay_sheet.query(
             f"`Fwd Agent` in {['G2OCEAN']}").copy()
-        self.port_mapping = {v['Port Code']: v['G2 Port Name'] for k, v in (pd.read_excel('../../data/G2 Port Code Mapping.xlsx')
-                                                                            .to_dict('index').items())}
+        self.port_mapping = {v['Port Code']: v['Port Name'] for k, v in (pd.read_excel('../../data/G2 Port Code Mapping.xlsx')
+                                                                         .to_dict('index').items())}
 
     def get_updated_etd(self, row):
         try:
@@ -346,10 +345,21 @@ class DelayReport:
 
         # Format the dates correctly via strftime
         date_columns = ['ETD Date', 'Disport ETA',
-                        'updated_etd', 'updated_eta']
+                        'updated_etd', 'updated_eta', 'BOL Date']
         for column in date_columns:
             self.main_delay_sheet[column] = self.main_delay_sheet[column].dt.strftime(
                 '%d/%m/%Y')
+
+    def mask_bol(self):
+        # Masks those lines with existing BOL dates; since we no longer track these ships which have left site
+        self.main_delay_sheet.loc[~self.main_delay_sheet['BOL Date'].isnull(
+        ), 'updated_etd'] = self.main_delay_sheet['ETD Date']
+        self.main_delay_sheet.loc[~self.main_delay_sheet['BOL Date'].isnull(
+        ), 'updated_eta'] = self.main_delay_sheet['Disport ETA']
+        self.main_delay_sheet.loc[~self.main_delay_sheet['BOL Date'].isnull(
+        ), 'No. of days delayed ETD'] = 0
+        self.main_delay_sheet.loc[~self.main_delay_sheet['BOL Date'].isnull(
+        ), 'No. of days delayed ETA'] = 0
 
     def output(self):
         # Output the excel file
@@ -358,9 +368,8 @@ class DelayReport:
             Path('../../' + self.saved_file), index=False)
         os.startfile(Path('../../' + self.saved_file))
 
+
 # Utility functions
-
-
 def write_json(response: dict, output_file: str):
     with open(output_file, 'w') as w:
         json.dump(response, w, indent=2)
@@ -377,6 +386,7 @@ if __name__ == "__main__":
     delay_report.run_msc()
     delay_report.run_g2()
     delay_report.calculate_deltas()
+    delay_report.mask_bol()
     delay_report.output()
 
     print(f'{delay_report.saved_file} has been generated in the current directory. You may close this window.')
