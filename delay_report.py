@@ -13,6 +13,113 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 
+class HamburgExtractor:
+    def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
+        self.carrier_mapping = carrier_mapping
+        # Get the Hamburg delay sheet
+        self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'HAMBURG']}")
+                            .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
+                                   'No. of days delayed ETA', 'Reason of Delay'], axis=1)
+                            .copy())
+
+        # Get the Hamburg-specific port names from the UNLOCODEs
+        self.port_mapping = {v['Port Code']: v['Port Name'] for k, v in (pd.read_excel('../../data/Hamburg Port Code Mapping.xlsx')
+                                                                         .to_dict('index').items())}
+
+        # Get port name
+        self.delay_sheet = self.delay_sheet.assign(pol_name=lambda x: x['Port of Loading'],
+                                                   pod_name=lambda x: x['Port of discharge']).copy()
+
+        self.delay_sheet.pod_name = self.delay_sheet.pod_name.replace(
+            self.port_mapping)
+
+        self.interval = interval
+        self.session = requests.Session()
+
+    def prepare(self):
+        """
+        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
+            delay_sheet.
+        """
+        # Further filter
+        key = ['pol_name', 'pod_name']
+        self.reduced_df = self.delay_sheet.drop_duplicates(key)[
+            key].sort_values(key)
+        self.reduced_df.dropna(inplace=True)
+
+    def call_api(self):
+        """
+        Makes calls to the BigSchedules Web API, using information from the prepare method as parameters in the
+        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
+        """
+        def get_schedules(pol_name: str, pod_name: str, i):
+            url = "https://api.hamburgsud-line.com/v1/schedules/point-to-point"
+            headers = {'x-api-key': 'LJj1A6oZO6OjnqxQLogPaiSC2QrDtT2y'}
+            parameters = {
+                "searchDate": datetime.today().replace(day=i).strftime('%Y-%m-%d'),
+                "from": pol_name,
+                "to": pod_name
+            }
+            return self.session.get(url, headers=headers, params=parameters)
+
+        self.response_jsons = []
+        for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
+            for i in range(1, 30, 7):
+                response_filename = f'Hamburg {row.pol_name}-{row.pod_name} {i:02}.json'
+                if response_filename not in os.listdir():
+                    response = get_schedules(row.pol_name, row.pod_name, i)
+                    self.response_jsons.append(response.json())
+                    if len(response.json()):
+                        write_json(response.json(), response_filename)
+                    time.sleep(random.randint(*self.interval))
+                else:
+                    with open(response_filename, 'r') as f:
+                        self.response_jsons.append(json.load(f))
+
+    def extract(self):
+        """
+        Extracts information from the JSON responses from the call_api method and assembles the final dataframe.
+        """
+        def get_relevant_fields(response, i):
+            def get_vv(data, i, total_legs):
+                for j in range(total_legs):
+                    if data[i]['leg'][j]['transportMode'] == 'Liner':
+                        vessel = data[i]['leg'][j]['vessel']['name']
+                        voyage = data[i]['leg'][j]['vessel']['voyage']
+                        return voyage, vessel
+                return None, None
+
+            total_legs = len(response[i]['leg'])
+            return {
+                'pol_name': response[i]['leg'][0]['from']['unlocode'],
+                'pod_name': response[i]['leg'][-1]['to']['unlocode'],
+                'Voyage': get_vv(response, i, total_legs)[0],
+                'Vessel': get_vv(response, i, total_legs)[1],
+                'updated_etd': response[i]['leg'][0]['expectedDepartureLT'],
+                'updated_eta': response[i]['leg'][-1]['expectedArrivalLT']
+            }
+
+        self.response_df = pd.DataFrame(([get_relevant_fields(response, i)
+                                          for response in self.response_jsons
+                                          if len(response)
+                                          for i in range(len(response))]))
+
+        self.response_df = self.response_df.sort_values('updated_eta').drop_duplicates(
+            ['pol_name', 'pod_name', 'Voyage', 'Vessel'])
+
+        merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
+        self.delay_sheet = (self.delay_sheet.reset_index().
+                            merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                  on=merge_key, how='left')
+                            .set_index('index')
+                            .copy())
+
+        self.delay_sheet.updated_eta = pd.to_datetime(
+            self.delay_sheet.updated_eta.str[:10])
+        self.delay_sheet.updated_etd = pd.to_datetime(
+            self.delay_sheet.updated_etd.str[:10])
+
+
 class OOCLExtractor:
     def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
         # Get the carrier mapping
@@ -76,7 +183,8 @@ class OOCLExtractor:
             # PODs with no pod_id
             exception_cases = [
                 k for k, v in self.oocl_port_id.items() if v is None]
-            write_json(exception_cases, 'oocl_exceptions.txt')
+            if len(exception_cases):
+                write_json(exception_cases, 'oocl_exceptions.txt')
         else:
             read_config(self, 'oocl_port_id', 'OOCL portID.json')
 
@@ -263,7 +371,7 @@ class MSCExtractor:
 
         This API call does not require a cookie.
         """
-        if 'countryID.json' not in os.listdir():
+        if 'MSC locationID.json' not in os.listdir():
             def query_id(port: str):
                 url = f"https://www.msc.com/api/schedules/autocomplete?q={port}"
                 return self.session.get(url)
@@ -284,7 +392,8 @@ class MSCExtractor:
             # PODs with no pod_id
             exception_cases = [
                 k for k, v in self.msc_port_id.items() if v is None]
-            write_json(exception_cases, 'MSC exceptions.txt')
+            if len(exception_cases):
+                write_json(exception_cases, 'MSC exceptions.txt')
         else:
             read_config(self, 'msc_port_id', 'MSC locationID.json')
 
@@ -452,6 +561,7 @@ class DelayReport:
         # Setup
         self.config = {}
         self.carrier_mapping = {}
+        self.hamburg_extractor = None
         self.oocl_extractor = None
         self.msc_extractor = None
         self.g2_extractor = None
@@ -512,6 +622,17 @@ class DelayReport:
             pass
         os.chdir(today_path)
 
+    def run_hamburg(self):
+        if self.config.get('run_hamburg'):
+            print('Preparing for Hamburg extraction...')
+            self.hamburg_extractor = HamburgExtractor(
+                self.clean_delay_sheet, self.interval, self.carrier_mapping)
+            self.hamburg_extractor.prepare()
+            print('Extracting Hamburg information from their website...')
+            self.hamburg_extractor.call_api()
+            self.hamburg_extractor.extract()
+            self.main_delay_sheet.update(self.hamburg_extractor.delay_sheet)
+
     def run_oocl(self):
         if self.config.get('run_oocl'):
             print('Preparing for OOCL extraction...')
@@ -545,15 +666,21 @@ class DelayReport:
             self.main_delay_sheet.update(self.g2_extractor.delay_sheet)
 
     def calculate_deltas(self):
+        # Format the dates correctly via strftime
+        date_columns = ['ETD Date', 'Disport ETA', 'BOL Date',
+                        'updated_etd', 'updated_eta']
+
+        # Convert strings to dates
+        for column in date_columns[:3]:
+            self.main_delay_sheet[column] = pd.to_datetime(
+                self.main_delay_sheet[column], format='%d/%m/%Y')
+
         # Calculate the deltas
         self.main_delay_sheet['No. of days delayed ETD'] = (self.main_delay_sheet.updated_etd
-                                                            - pd.to_datetime(self.main_delay_sheet['ETD Date'])).dt.days
+                                                            - self.main_delay_sheet['ETD Date']).dt.days
         self.main_delay_sheet['No. of days delayed ETA'] = (self.main_delay_sheet.updated_eta
-                                                            - pd.to_datetime(self.main_delay_sheet['Disport ETA'])).dt.days
+                                                            - self.main_delay_sheet['Disport ETA']).dt.days
 
-        # Format the dates correctly via strftime
-        date_columns = ['ETD Date', 'Disport ETA',
-                        'updated_etd', 'updated_eta', 'BOL Date']
         for column in date_columns:
             self.main_delay_sheet[column] = self.main_delay_sheet[column].dt.strftime(
                 '%d/%m/%Y')
@@ -590,6 +717,7 @@ def read_config(instance: object, attr_name: str, path_to_config: str):
 
 if __name__ == "__main__":
     delay_report = DelayReport()
+    delay_report.run_hamburg()
     delay_report.run_oocl()
     delay_report.run_msc()
     delay_report.run_g2()
