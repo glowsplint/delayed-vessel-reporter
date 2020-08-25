@@ -10,7 +10,208 @@ import time
 
 from tqdm.auto import tqdm
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+class OOCLExtractor:
+    def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
+        # Get the carrier mapping
+        self.carrier_mapping = carrier_mapping
+
+        # Get the OOCL delay sheet
+        self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'OOCL']}")
+                            .replace({'Fwd Agent': self.carrier_mapping})
+                            .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
+                                   'No. of days delayed ETA', 'Reason of Delay'], axis=1)
+                            .copy())
+
+        # Get the MSC-specific port names from the UNLOCODEs
+        self.port_mapping = {v['Port Code']: v['Port Name'] for k, v in (pd.read_excel('../../data/OOCL Port Code Mapping.xlsx')
+                                                                         .to_dict('index').items())}
+
+        # Get port name
+        self.delay_sheet = self.delay_sheet.assign(pol_name=lambda x: x['Port of Loading'].apply(lambda y: self.port_mapping.get(y)),
+                                                   pod_name=lambda x: x['Port of discharge'].apply(lambda y: self.port_mapping.get(y))).copy()
+
+        self.interval = interval
+        self.oocl_port_id = {}
+        self.session = requests.Session()
+
+    def get_location_id(self):
+        """
+        Checks if the query for locationID has been done today.
+        If it has been done, skips it and uses the existing locationID JSON file.
+        Otherwise, queries the locationID API.
+        """
+        if 'OOCL portID.json' not in os.listdir():
+            def get_id(response):
+                results = response.json().get('data').get('results')
+                if results:
+                    return results[0].get('LocationID')
+                return None
+
+            def query_id(port: str):
+                url = f"https://www.oocl.com/_catalogs/masterpage/AutoCompleteSailingSchedule.aspx?type=sailingSchedule&Pars={port}"
+                headers = {
+                    'Sec-Fetch-User': '?1',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Dest': 'document',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36',
+                    'Accept-Language': 'en-GB,en;q=0.9',
+                    'Upgrade-Insecure-Requests': "1",
+                    'Cache-Control': 'max-age=0',
+                }
+                return self.session.get(url, headers=headers)
+
+            oocl_locations = (list(self.delay_sheet.pol_name.unique(
+            )) + list(self.delay_sheet.pod_name.unique()))
+            self.oocl_port_id = {location: get_id(
+                query_id(location)) for location in tqdm(oocl_locations)}
+            if len(self.oocl_port_id):
+                write_json(self.oocl_port_id, 'OOCL portID.json')
+
+            # PODs with no pod_id
+            exception_cases = [
+                k for k, v in self.oocl_port_id.items() if v is None]
+            write_json(exception_cases, 'oocl_exceptions.txt')
+        else:
+            read_config(self, 'oocl_port_id', 'OOCL portID.json')
+
+    def prepare(self):
+        """
+        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
+            delay_sheet.
+        """
+        # Further filter by POL-Vessel-Voyage to get ETD, POD-Vessel-Voyage to get ETA
+        key = ['pol_name', 'pod_name']
+        self.reduced_df = self.delay_sheet.drop_duplicates(key)[
+            key].sort_values(key)
+
+        self.reduced_df['pol_code'] = self.reduced_df.pol_name.map(
+            self.oocl_port_id)
+        self.reduced_df['pod_code'] = self.reduced_df.pod_name.map(
+            self.oocl_port_id)
+
+        # Unable to handle those with no pod_id in BigSchedules Web; dropping these lines
+        self.reduced_df.dropna(inplace=True)
+
+    def call_api(self):
+        """
+        Makes calls to the BigSchedules Web API, using information from the prepare method as parameters in the
+        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
+        """
+        def get_schedules(pol_locationID: str, pod_locationID: str, pol_name: str, pod_name: str):
+            url = f"http://moc.oocl.com/nj_prs_wss/mocss/secured/supportData/nsso/searchHubToHubRoute"
+            headers = {
+                'Accept': 'application/json, text/plain, */*',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.135 Safari/537.36',
+                'Origin': 'http://moc.oocl.com',
+                'Referer': 'http://moc.oocl.com/nj_prs_wss/',
+                'Accept-Encoding': 'gzip, deflate',
+                'Accept-Language': 'en-GB,en;q=0.9',
+                'Cookie': 'userSearchHistory=%5B%7B%22origin%22%3A%22Brisbane%2C%20Queensland%2C%20Australia%22%2C%22destination%22%3A%22Bangkok%2C%20Thailand%22%2C%22originId%22%3A%22461802935875046%22%2C%22destinationId%22%3A%22461802935876800%22%2C%22originCountryCode%22%3A%22%22%2C%22destinationCountryCode%22%3A%22%22%2C%22transhipment_PortId%22%3Anull%2C%22transhipment_Port%22%3Anull%2C%22service%22%3Anull%2C%22port_of_LoadId%22%3Anull%2C%22port_of_Load%22%3Anull%2C%22port_of_DischargeId%22%3Anull%2C%22port_of_Discharge%22%3Anull%2C%22origin_Haulage%22%3A%22cy%22%2C%22destination_Haulage%22%3A%22cy%22%2C%22cargo_Nature%22%3A%22dry%22%2C%22sailing%22%3A%22sailing.from%22%2C%22weeks%22%3A%222%22%7D%5D; AcceptCookie=yes; BIGipServeriris4-wss=1597103762.61451.0000; BIGipServerpool_ir4moc=590470802.20480.0000; BIGipServerpool_moc_8011=2022663115.19231.0000'
+            }
+
+            payload = {
+                "date": f"{(datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')}",
+                "displayDate": f"{(datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')}",
+                "transhipment_Port": None,
+                "port_of_Load": None,
+                "port_of_Discharge": None,
+                "sailing": "sailing.from",
+                "weeks": "2",
+                "transhipment_PortId": None,
+                "service": None,
+                "port_of_LoadId": None,
+                "port_of_DischargeId": None,
+                "origin_Haulage": "cy",
+                "destination_Haulage": "cy",
+                "cargo_Nature": "dry",
+                "originId": f"{pol_locationID}",
+                "originCountryCode": "",
+                "destinationCountryCode": "",
+                "destinationId": f"{pod_locationID}",
+                "origin": f"{pol_name}",
+                "destination": f"{pod_name}",
+                "weeksSymbol": "+"
+            }
+
+            return self.session.post(url, headers=headers, data=payload)
+
+        self.response_jsons = []
+        for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
+            response_filename = f'OOCL {int(row.pol_code)}-{int(row.pod_code)}.json'
+            if response_filename not in os.listdir():
+                response = get_schedules(int(row.pol_code), int(
+                    row.pod_code), row.pol_name, row.pod_name)
+                self.response_jsons.append(response.json())
+                if len(response.json()):
+                    write_json(response.json(), response_filename)
+                time.sleep(random.randint(*self.interval))
+            else:
+                with open(response_filename, 'r') as f:
+                    self.response_jsons.append(json.load(f))
+
+    def extract(self):
+        """
+        Extracts information from the JSON responses from the call_api method and assembles the final dataframe.
+        """
+        def get_relevant_fields(response, i):
+            def get_vv_etd(response, i):
+                for j in range(len(response['data']['standardRoutes'][i]['Legs'])):
+                    if response['data']['standardRoutes'][i]['Legs'][j]['Type'] == "Voyage":
+                        voyage = response['data']['standardRoutes'][i]['Legs'][j]['ExternalVoyageReference']
+                        vessel = response['data']['standardRoutes'][i]['Legs'][j]['VesselName']
+                        etd = response['data']['standardRoutes'][i]['Legs'][j]['FromETDLocalDateTime']['dateStr']
+                        return voyage, vessel, etd
+                return ""
+
+            def get_eta(response, i):
+                for j in range(len(list(reversed(response['data']['standardRoutes'][i]['Legs'])))):
+                    if response['data']['standardRoutes'][i]['Legs'][j]['Type'] == "Voyage":
+                        eta = response['data']['standardRoutes'][i]['Legs'][j]['ToETALocalDateTime']['dateStr']
+                        return eta
+                return ""
+
+            return {
+                'pol_code': response['data']['standardRoutes'][i]['Legs'][0]['City']['ID'],
+                'pod_code': response['data']['standardRoutes'][i]['Legs'][-1]['City']['ID'],
+                'Voyage': get_vv_etd(response, i)[0],
+                'Vessel': get_vv_etd(response, i)[1],
+                'updated_etd': get_vv_etd(response, i)[2],
+                'updated_eta': get_eta(response, i)
+            }
+
+        self.response_df = pd.DataFrame(([get_relevant_fields(response, i)
+                                          for response in self.response_jsons
+                                          if len(response)
+                                          for i in range(len(response['data']['standardRoutes']))]))
+
+        # Create reverse mapping from port_code to name
+        oocl_port_id_reversed = {v: k for k, v in self.oocl_port_id.items()}
+
+        self.response_df['pol_name'] = self.response_df.pol_code.map(
+            oocl_port_id_reversed)
+        self.response_df['pod_name'] = self.response_df.pod_code.map(
+            oocl_port_id_reversed)
+
+        self.response_df = self.response_df.sort_values('updated_eta').drop_duplicates(
+            ['pol_code', 'pod_code', 'Voyage', 'Vessel'])
+
+        merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
+        self.delay_sheet = (self.delay_sheet.reset_index().
+                            merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                  on=merge_key, how='left')
+                            .set_index('index')
+                            .copy())
+
+        self.delay_sheet.updated_eta = pd.to_datetime(
+            self.delay_sheet.updated_eta.str[:8], format='%Y%m%d')
+        self.delay_sheet.updated_etd = pd.to_datetime(
+            self.delay_sheet.updated_etd.str[:8], format='%Y%m%d')
 
 
 class MSCExtractor:
@@ -19,7 +220,7 @@ class MSCExtractor:
 
     Methods
     -------
-    get_countryID:
+    get_location_id:
         Gets the countryID mappings via the CountryID API in order to use the Search Schedules API.
 
     prepare:
@@ -54,7 +255,7 @@ class MSCExtractor:
         self.interval = interval
         self.session = requests.Session()
 
-    def get_countryID(self):
+    def get_location_id(self):
         """
         Checks if the query for countryID has been done today.
         If it has been done, skips it and uses the existing countryID JSON file.
@@ -77,14 +278,15 @@ class MSCExtractor:
                 location) for location in tqdm(msc_locations)}
             self.msc_port_id = {k: get_id(v)
                                 for k, v in location_code_responses.items()}
-            write_json(self.msc_port_id, 'countryID.json')
+            if len(self.msc_port_id):
+                write_json(self.msc_port_id, 'MSC locationID.json')
 
             # PODs with no pod_id
             exception_cases = [
                 k for k, v in self.msc_port_id.items() if v is None]
-            write_json(exception_cases, 'msc_exceptions.txt')
+            write_json(exception_cases, 'MSC exceptions.txt')
         else:
-            read_config(self, 'msc_port_id', 'countryID.json')
+            read_config(self, 'msc_port_id', 'MSC locationID.json')
 
     def prepare(self):
         """
@@ -236,7 +438,7 @@ class DelayReport:
 
     Methods
     -------
-    run_bs, run_msc, run_g2:
+    run_oocl, run_msc, run_g2:
         Runs the corresponding extraction by instantiating a relevant Extractor class.
 
     calculate_deltas:
@@ -250,7 +452,7 @@ class DelayReport:
         # Setup
         self.config = {}
         self.carrier_mapping = {}
-        self.bs_extractor = None
+        self.oocl_extractor = None
         self.msc_extractor = None
         self.g2_extractor = None
         self.saved_file = ''
@@ -310,18 +512,24 @@ class DelayReport:
             pass
         os.chdir(today_path)
 
-    def run_bs(self):
-        if self.config.get('run_bs'):
-            bs_extractor = BSExtractor(self.clean_delay_sheet, self.interval)
-            bs_extractor.extract()
-            self.main_delay_sheet.update(self.bs_extractor.delay_sheet)
+    def run_oocl(self):
+        if self.config.get('run_oocl'):
+            print('Preparing for OOCL extraction...')
+            self.oocl_extractor = OOCLExtractor(
+                self.clean_delay_sheet, self.interval, self.carrier_mapping)
+            self.oocl_extractor.get_location_id()
+            self.oocl_extractor.prepare()
+            print('Extracting OOCL information from their website...')
+            self.oocl_extractor.call_api()
+            self.oocl_extractor.extract()
+            self.main_delay_sheet.update(self.oocl_extractor.delay_sheet)
 
     def run_msc(self):
         if self.config.get('run_msc'):
             print('Preparing for MSC extraction...')
             self.msc_extractor = MSCExtractor(
                 self.clean_delay_sheet, self.interval)
-            self.msc_extractor.get_countryID()
+            self.msc_extractor.get_location_id()
             self.msc_extractor.prepare()
             print('Extracting MSC information from their website...')
             self.msc_extractor.call_api()
@@ -382,7 +590,7 @@ def read_config(instance: object, attr_name: str, path_to_config: str):
 
 if __name__ == "__main__":
     delay_report = DelayReport()
-    delay_report.run_bs()
+    delay_report.run_oocl()
     delay_report.run_msc()
     delay_report.run_g2()
     delay_report.calculate_deltas()

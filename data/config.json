@@ -1,6 +1,6 @@
 {
-  "run_bigschedules": false,
-  "run_msc": true,
+  "run_oocl": true,
+  "run_msc": false,
   "run_g2": true,
   "g2_filename": "G2 Schedule.xlsx",
   "delay_filename": "Vessel Delay Tracking.xlsx",
