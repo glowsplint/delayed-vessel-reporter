@@ -1,4 +1,5 @@
 {
+  "run_cma": true,
   "run_anl": true,
   "run_hamburg": false,
   "run_oocl": false,

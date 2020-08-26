@@ -13,6 +13,173 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 
+class CMAExtractor:
+    def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
+        self.carrier_mapping = carrier_mapping
+        # Get the CMA delay sheet
+        self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'CMA']}")
+                            .replace({'Fwd Agent': carrier_mapping})
+                            .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
+                                   'No. of days delayed ETA', 'Reason of Delay'], axis=1)
+                            .copy())
+
+        # Get the CMA-specific port names from the UNLOCODEs
+        self.port_mapping = {v['Port Code']: v['Port Name'] for k, v in (pd.read_excel('../../data/CMA Port Code Mapping.xlsx')
+                                                                         .to_dict('index').items())}
+
+        # Get port name
+        self.delay_sheet = self.delay_sheet.assign(pol_name=lambda x: x['Port of Loading'],
+                                                   pod_name=lambda x: x['Port of discharge']).copy()
+
+        self.delay_sheet.pod_name = self.delay_sheet.pod_name.replace(
+            self.port_mapping)
+
+        self.interval = interval
+        self.session = requests.Session()
+
+    def get_location_id(self):
+        """
+        Checks if the query for locationID has been done today.
+        If it has been done, skips it and uses the existing locationID JSON file.
+        Otherwise, queries the locationID API.
+        """
+        port_id_file = 'CMA portID.json'
+        if port_id_file not in os.listdir():
+            def get_id(response):
+                if len(response.json()):
+                    return tuple(response.json()[0].get('ActualName').split(' ; '))
+                return None
+
+            def query_id(port: str):
+                url = f"https://www.cma-cgm.com/api/PortsWithInlands/GetAll?id={port}&manageChineseRegions=true"
+                headers = {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Referer': 'https://www.cma-cgm.com/ebusiness/schedules',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Accept': '*/*',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.135 Safari/537.36',
+                    'Accept-Language': 'en-GB,en;q=0.9',
+                }
+                return self.session.get(url, headers=headers)
+
+            locations = (list(self.delay_sheet.pol_name.unique(
+            )) + list(self.delay_sheet.pod_name.unique()))
+            self.port_id = {location: get_id(
+                query_id(location)) for location in tqdm(locations)}
+            if len(self.port_id):
+                write_json(self.port_id, port_id_file)
+
+            # PODs with no pod_id
+            exception_cases = [
+                k for k, v in self.port_id.items() if v is None]
+            if len(exception_cases):
+                write_json(exception_cases, 'cma_exceptions.txt')
+        else:
+            read_config(self, 'port_id', port_id_file)
+
+    def prepare(self):
+        """
+        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
+            delay_sheet.
+        """
+        # Further filter
+        key = ['pol_name', 'pod_name']
+        self.reduced_df = self.delay_sheet.drop_duplicates(key)[
+            key].sort_values(key)
+
+        self.reduced_df['pol_code'] = self.reduced_df.pol_name.map(
+            self.port_id)
+        self.reduced_df['pod_code'] = self.reduced_df.pod_name.map(
+            self.port_id)
+
+        self.reduced_df.dropna(inplace=True)
+
+    def call_api(self):
+        """
+        Makes calls to the CMA Web API, using information from the prepare method as parameters in the
+        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
+        """
+        def get_schedules(pol_code: tuple, pod_code: tuple):
+            pol_1, pol_2, pol_3 = pol_code
+            pod_1, pod_2, pod_3 = pod_code
+            pod_2 = pod_2.replace(',', '%2C')
+            url = f'https://www.cma-cgm.com/ebusiness/schedules/routing-finder?POLDescription={pol_1}+%3B+{pol_2}+%3B+{pol_3}&PODDescription={pod_1}+%3B+{pod_2}+%3B+{pod_3}&g-recaptcha-response=undefined&actualPOLDescription={pol_1}+%3B+{pol_2}+%3B+{pol_3}&actualPODDescription={pod_1}+%3B+{pod_2}+%3B+{pod_3}'
+            return self.session.get(url)
+
+        self.response_jsons = []
+        for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
+            response_filename = f'CMA {row.pol_name}-{row.pod_name}.html'
+            if response_filename not in os.listdir():
+                response = get_schedules(row.pol_code, row.pod_code)
+                self.response_jsons.append(response.text)
+                if len(response.text):
+                    with open(response_filename, 'w') as f:
+                        f.write(response.text)
+                time.sleep(random.randint(*self.interval))
+            else:
+                with open(response_filename, 'r') as f:
+                    self.response_jsons.append(f.read())
+
+    def extract(self):
+        """
+        Extracts information from the HTML responses from the call_api method and assembles the final dataframe.
+
+        Extracts data from all columns of a dataframe.
+        Generates a dataframe for every table
+        Loop over all tables -> dataframes
+        Concatenates all these dataframes into one dataframe
+        """
+        self.response_intermediate = [pd.read_html(
+            response) for response in self.response_jsons]
+        reverse_port_id = {v[0].split(
+            ", ")[0]: k for k, v in self.port_id.items() if v is not None}
+
+        def get_updated_eta(row):
+            for item in row:
+                if len(item) > 10:
+                    return pd.to_datetime(item)
+            return None
+
+        list_of_dataframes = []
+        for i in self.response_intermediate:
+            for table in i:
+                pol = table.iloc[1].str.split("  ").str[0][1:].str.split(
+                    ", ").str[0].apply(reverse_port_id.get)
+
+                if table.shape[0] == 10:
+                    pod_row, updated_eta_row = (9, 8)
+                else:
+                    pod_row, updated_eta_row = (5, 4)
+
+                pod = table.iloc[pod_row].str.split("  ")[1:].str[0].str.split(
+                    ", ").str[0].apply(reverse_port_id.get)
+                updated_etd = table.iloc[2][1:].str.split(
+                    r"(\w{6,},)").apply(get_updated_eta)
+                updated_eta = table.iloc[updated_eta_row][1:].apply(
+                    pd.to_datetime)
+                vessel = table.iloc[3][1:].str.split("  ").str[1]
+                voyage = table.iloc[3][1:].str.split("  ").str[-1]
+
+                list_of_dataframes.append(pd.DataFrame({'pol_name': pol, 'pod_name': pod, 'Vessel': vessel,
+                                                        'Voyage': voyage, 'updated_etd': updated_etd,
+                                                        'updated_eta': updated_eta}))
+
+        merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
+        self.response_df = pd.concat(
+            list_of_dataframes).drop_duplicates(merge_key)
+        self.response_df.sort_values(['updated_eta'], inplace=True)
+        self.response_df.reset_index(drop=True, inplace=True)
+
+        self.delay_sheet = (self.delay_sheet.reset_index().
+                            merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                  on=merge_key, how='left')
+                            .set_index('index')
+                            .copy())
+
+
 class ANLExtractor:
     def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
         self.carrier_mapping = carrier_mapping
@@ -789,6 +956,18 @@ class DelayReport:
             pass
         os.chdir(today_path)
 
+    def run_cma(self):
+        if self.config.get('run_cma'):
+            print('Preparing for CMA extraction...')
+            self.cma_extractor = CMAExtractor(
+                self.clean_delay_sheet, self.interval, self.carrier_mapping)
+            self.cma_extractor.get_location_id()
+            self.cma_extractor.prepare()
+            print('Extracting CMA information from their website...')
+            self.cma_extractor.call_api()
+            self.cma_extractor.extract()
+            self.main_delay_sheet.update(self.cma_extractor.delay_sheet)
+
     def run_anl(self):
         if self.config.get('run_anl'):
             print('Preparing for ANL extraction...')
@@ -896,6 +1075,7 @@ def read_config(instance: object, attr_name: str, path_to_config: str):
 
 if __name__ == "__main__":
     delay_report = DelayReport()
+    delay_report.run_cma()
     delay_report.run_anl()
     delay_report.run_hamburg()
     delay_report.run_oocl()
