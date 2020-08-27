@@ -442,21 +442,26 @@ class HamburgExtractor(BaseExtractor):
                                           for response in self.response_jsons
                                           if len(response)
                                           for i in range(len(response))]))
+        if len(self.response_df):
+            self.response_df = self.response_df.sort_values('updated_eta').drop_duplicates(
+                ['pol_name', 'pod_name', 'Voyage', 'Vessel'])
 
-        self.response_df = self.response_df.sort_values('updated_eta').drop_duplicates(
-            ['pol_name', 'pod_name', 'Voyage', 'Vessel'])
+            merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
+            self.delay_sheet = (self.delay_sheet.reset_index().
+                                merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                      on=merge_key, how='left')
+                                .set_index('index')
+                                .copy())
 
-        merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
-        self.delay_sheet = (self.delay_sheet.reset_index().
-                            merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
-                                  on=merge_key, how='left')
-                            .set_index('index')
-                            .copy())
-
-        self.delay_sheet.updated_eta = pd.to_datetime(
-            self.delay_sheet.updated_eta.str[:10])
-        self.delay_sheet.updated_etd = pd.to_datetime(
-            self.delay_sheet.updated_etd.str[:10])
+            self.delay_sheet.updated_eta = pd.to_datetime(
+                self.delay_sheet.updated_eta.str[:10])
+            self.delay_sheet.updated_etd = pd.to_datetime(
+                self.delay_sheet.updated_etd.str[:10])
+        else:
+            self.response_df = pd.DataFrame({
+                'pol_name': [], 'pod_name': [],
+                'Vessel': [], 'Voyage': [],
+                'updated_eta': [], 'updated_etd': []})
 
 
 class OOCLExtractor(BaseExtractor):
@@ -623,25 +628,31 @@ class OOCLExtractor(BaseExtractor):
         # Create reverse mapping from port_code to name
         port_id_reversed = {v: k for k, v in self.port_id.items()}
 
-        self.response_df['pol_name'] = self.response_df.pol_code.map(
-            port_id_reversed)
-        self.response_df['pod_name'] = self.response_df.pod_code.map(
-            port_id_reversed)
+        if len(self.response_df):
+            self.response_df['pol_name'] = self.response_df.pol_code.map(
+                port_id_reversed)
+            self.response_df['pod_name'] = self.response_df.pod_code.map(
+                port_id_reversed)
 
-        self.response_df = self.response_df.sort_values('updated_eta').drop_duplicates(
-            ['pol_code', 'pod_code', 'Voyage', 'Vessel'])
+            self.response_df = self.response_df.sort_values('updated_eta').drop_duplicates(
+                ['pol_code', 'pod_code', 'Voyage', 'Vessel'])
 
-        merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
-        self.delay_sheet = (self.delay_sheet.reset_index().
-                            merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
-                                  on=merge_key, how='left')
-                            .set_index('index')
-                            .copy())
+            merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
+            self.delay_sheet = (self.delay_sheet.reset_index().
+                                merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                      on=merge_key, how='left')
+                                .set_index('index')
+                                .copy())
 
-        self.delay_sheet.updated_eta = pd.to_datetime(
-            self.delay_sheet.updated_eta.str[:8], format='%Y%m%d')
-        self.delay_sheet.updated_etd = pd.to_datetime(
-            self.delay_sheet.updated_etd.str[:8], format='%Y%m%d')
+            self.delay_sheet.updated_eta = pd.to_datetime(
+                self.delay_sheet.updated_eta.str[:8], format='%Y%m%d')
+            self.delay_sheet.updated_etd = pd.to_datetime(
+                self.delay_sheet.updated_etd.str[:8], format='%Y%m%d')
+        else:
+            self.response_df = pd.DataFrame({
+                'pol_name': [], 'pod_name': [],
+                'Vessel': [], 'Voyage': [],
+                'updated_eta': [], 'updated_etd': []})
 
 
 class MSCExtractor(BaseExtractor):
@@ -754,24 +765,29 @@ class MSCExtractor(BaseExtractor):
         # Create reverse mapping from port_code to name
         port_id_reversed = {v: k for k, v in self.port_id.items()}
 
-        # Add additional columns to response_df
-        self.response_df['pol_name'] = self.response_df.pol_code.map(
-            port_id_reversed)
-        self.response_df['pod_name'] = self.response_df.pod_code.map(
-            port_id_reversed)
+        if len(self.response_df):
+            # Add additional columns to response_df
+            self.response_df['pol_name'] = self.response_df.pol_code.map(
+                port_id_reversed)
+            self.response_df['pod_name'] = self.response_df.pod_code.map(
+                port_id_reversed)
 
-        # Merge results back to original dataframe
-        merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
-        self.delay_sheet = (self.delay_sheet.reset_index().
-                            merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
-                                  on=merge_key, how='left')
-                            .set_index('index')
-                            .copy())
-        self.delay_sheet.updated_eta = pd.to_datetime(
-            self.delay_sheet.updated_eta.str[:10])
-        self.delay_sheet.updated_etd = pd.to_datetime(
-            self.delay_sheet.updated_etd.str[:10])
-
+            # Merge results back to original dataframe
+            merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
+            self.delay_sheet = (self.delay_sheet.reset_index().
+                                merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                    on=merge_key, how='left')
+                                .set_index('index')
+                                .copy())
+            self.delay_sheet.updated_eta = pd.to_datetime(
+                self.delay_sheet.updated_eta.str[:10])
+            self.delay_sheet.updated_etd = pd.to_datetime(
+                self.delay_sheet.updated_etd.str[:10])
+        else:
+            self.response_df = pd.DataFrame({
+                'pol_name': [], 'pod_name': [],
+                'Vessel': [], 'Voyage': [],
+                'updated_eta': [], 'updated_etd': []})
 
 class G2Extractor:
     """
