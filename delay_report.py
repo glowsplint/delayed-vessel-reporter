@@ -53,6 +53,137 @@ class BaseExtractor:
         pass
 
 
+class COSCOExtractor(BaseExtractor):
+    def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
+        self.carrier_mapping = carrier_mapping
+        self.interval = interval
+        self.port_id = {}
+        self.session = requests.Session()
+
+        # Get the COSCO delay sheet
+        self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'COSCO']}")
+                            .replace({'Fwd Agent': self.carrier_mapping})
+                            .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
+                                   'No. of days delayed ETA', 'Reason of Delay'], axis=1)
+                            .copy())
+
+        # Get the COSCO-specific port names from the UNLOCODEs
+        self.port_mapping = {v['Port Code']: (v['Port Name'], v['Port Number']) for k, v in (pd.read_excel('../../data/COSCO Port Code Mapping.xlsx')
+                                                                                             .to_dict('index').items())}
+
+        # Get port name
+        self.delay_sheet = self.delay_sheet.assign(pol_name=lambda x: x['Port of Loading'].apply(lambda y: self.port_mapping.get(y)[0]),
+                                                   pod_name=lambda x: x['Port of discharge'].apply(
+                                                       lambda y: self.port_mapping.get(y)[0]),
+                                                   pol_code=lambda x: x['Port of Loading'].apply(
+                                                       lambda y: self.port_mapping.get(y)[1]),
+                                                   pod_code=lambda x: x['Port of discharge'].apply(lambda y: self.port_mapping.get(y)[1])).copy()
+
+    def get_location_id(self):
+        pass
+
+    def prepare(self):
+        key = ['pol_name', 'pod_name', 'pol_code', 'pod_code']
+        self.reduced_df = self.delay_sheet.drop_duplicates(key)[
+            key].sort_values(key)
+
+        # Unable to handle those with no pod_id in BigSchedules Web; dropping these lines
+        self.reduced_df.dropna(inplace=True)
+
+    def call_api(self):
+        def get_schedules(pol_code: str, pod_code: str, pol_name: str, pod_name: str):
+            url = "https://elines.coscoshipping.com/ebschedule/public/purpoShipmentWs"
+            payload = {
+                "fromDate": f"{datetime.today().replace(day=1).strftime('%Y-%m-%d')}",
+                "pickup": "B",
+                "delivery": "B",
+                "estimateDate": "D",
+                "toDate": f"{(datetime.today().replace(day=1) + timedelta(days=89)).strftime('%Y-%m-%d')}",
+                "originCityUuid": f"{pol_code}",
+                "destinationCityUuid": f"{pod_code}",
+                "originCity": f"{pol_name}",
+                "destinationCity": f"{pod_name}",
+                "cargoNature": "All"
+            }
+
+            headers = {
+                'Connection': 'keep-alive',
+                'Accept': '*/*',
+                'language': 'en_US',
+                'sys': 'eb',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.135 Safari/537.36',
+                'Content-Type': 'application/json',
+                'Origin': 'https://elines.coscoshipping.com',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Dest': 'empty',
+                'Referer': 'https://elines.coscoshipping.com/ebusiness/sailingSchedule/searchByCity/resultByCity',
+                'Accept-Language': 'en-GB,en;q=0.9',
+            }
+
+            return self.session.post(url, headers=headers, json=payload)
+
+        self.response_jsons = []
+        for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
+            response_filename = f'COSCO {int(row.pol_code)}-{int(row.pod_code)}.json'
+            if response_filename not in os.listdir():
+                response = get_schedules(int(row.pol_code), int(
+                    row.pod_code), row.pol_name, row.pod_name)
+                self.response_jsons.append(response.json())
+                if len(response.json()):
+                    write_json(response.json(), response_filename)
+                time.sleep(random.randint(*self.interval))
+            else:
+                with open(response_filename, 'r') as f:
+                    self.response_jsons.append(json.load(f))
+
+    def extract(self):
+        def get_relevant_fields(response, i):
+            return {
+                'pol_code': response['data']['content']['data'][i]['pol'],
+                'pod_code': response['data']['content']['data'][i]['pod'],
+                'Voyage': response['data']['content']['data'][i]['extVoyage'],
+                'Vessel': response['data']['content']['data'][i]['vessel'],
+                'updated_etd': response['data']['content']['data'][i]['etd'],
+                'updated_eta': response['data']['content']['data'][i]['eta']
+            }
+
+        self.response_df = pd.DataFrame(([get_relevant_fields(response, i)
+                                          for response in self.response_jsons
+                                          if len(response)
+                                          for i in range(len(response['data']['content']['data']))]))
+
+        # Create reverse mapping from port_code to name
+        port_id_reversed = {v['First Name']: v['Port Name'] for k, v in (pd.read_excel('../../data/COSCO Port Code Mapping.xlsx')
+                                                                         .to_dict('index').items())}
+
+        if len(self.response_df):
+            self.response_df['pol_name'] = self.response_df.pol_code.map(
+                port_id_reversed)
+            self.response_df['pod_name'] = self.response_df.pod_code.map(
+                port_id_reversed)
+
+            merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
+            self.response_df = self.response_df.sort_values(
+                'updated_eta').drop_duplicates(merge_key)
+
+            self.delay_sheet = (self.delay_sheet.reset_index().
+                                merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                      on=merge_key, how='left')
+                                .set_index('index')
+                                .copy())
+
+            self.delay_sheet.updated_eta = pd.to_datetime(
+                self.delay_sheet.updated_eta.str[:10], format='%Y-%m-%d')
+            self.delay_sheet.updated_etd = pd.to_datetime(
+                self.delay_sheet.updated_etd.str[:10], format='%Y-%m-%d')
+        else:
+            self.response_df = pd.DataFrame({
+                'pol_name': [], 'pod_name': [],
+                'Vessel': [], 'Voyage': [],
+                'updated_eta': [], 'updated_etd': []})
+
+
 class CMAExtractor(BaseExtractor):
     def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
         self.carrier_mapping = carrier_mapping
@@ -512,10 +643,10 @@ class OOCLExtractor(BaseExtractor):
                 }
                 return self.session.get(url, headers=headers)
 
-            oocl_locations = (list(self.delay_sheet.pol_name.unique(
+            locations = (list(self.delay_sheet.pol_name.unique(
             )) + list(self.delay_sheet.pod_name.unique()))
             self.port_id = {location: get_id(
-                query_id(location)) for location in tqdm(oocl_locations)}
+                query_id(location)) for location in tqdm(locations)}
             if len(self.port_id):
                 write_json(self.port_id, 'OOCL portID.json')
 
@@ -684,10 +815,10 @@ class MSCExtractor(BaseExtractor):
                 if len(response.json()):
                     return response.json()[0].get('id')
 
-            msc_locations = (list(self.delay_sheet.pol_name.unique())
-                             + list(self.delay_sheet.pod_name.unique()))
+            locations = (list(self.delay_sheet.pol_name.unique())
+                         + list(self.delay_sheet.pod_name.unique()))
             location_code_responses = {location: query_id(
-                location) for location in tqdm(msc_locations)}
+                location) for location in tqdm(locations)}
             self.port_id = {k: get_id(v)
                             for k, v in location_code_responses.items()}
             if len(self.port_id):
@@ -776,7 +907,7 @@ class MSCExtractor(BaseExtractor):
             merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
             self.delay_sheet = (self.delay_sheet.reset_index().
                                 merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
-                                    on=merge_key, how='left')
+                                      on=merge_key, how='left')
                                 .set_index('index')
                                 .copy())
             self.delay_sheet.updated_eta = pd.to_datetime(
@@ -788,6 +919,7 @@ class MSCExtractor(BaseExtractor):
                 'pol_name': [], 'pod_name': [],
                 'Vessel': [], 'Voyage': [],
                 'updated_eta': [], 'updated_etd': []})
+
 
 class G2Extractor:
     """
@@ -858,6 +990,9 @@ class DelayReport:
         # Setup
         self.config = {}
         self.carrier_mapping = {}
+        self.cosco_extractor = None
+        self.cma_extractor = None
+        self.anl_extractor = None
         self.hamburg_extractor = None
         self.oocl_extractor = None
         self.msc_extractor = None
@@ -983,6 +1118,7 @@ def read_config(instance: object, attr_name: str, path_to_config: str):
 
 if __name__ == "__main__":
     delay_report = DelayReport()
+    delay_report.run('COSCO', 'cosco_extractor', COSCOExtractor)
     delay_report.run('CMA', 'cma_extractor', CMAExtractor)
     delay_report.run('ANL', 'anl_extractor', ANLExtractor)
     delay_report.run('Hamburg', 'hamburg_extractor', HamburgExtractor)

@@ -22,12 +22,12 @@ The script is written in a modular approach to increase ease of maintenance and 
 | MSC       | Completed | GET to countryID API <br> GET to Schedules API   | No <br> Yes       |
 | OOCL      | Completed | GET to locationID API <br> POST to Schedules API | No <br> Yes       |
 | HAMBURG   | Completed | GET direct                                       | No                |
-| ANL       | Completed | GET with pd.read_html                            |                   |
-| CMA       | Completed | GET with pd.read_html                            |                   |
+| ANL       | Completed | GET with pd.read_html                            | No                |
+| CMA       | Completed | GET with pd.read_html                            | No                |
 | HAPAG     | Next up   |                                                  |                   |
 | ONE       |           | POST                                             |                   |
-| COSCO     |           |                                                  |                   |
-| EVERGREEN |           | Selenium - CAPTCHA                               |                   |
+| COSCO     | Completed | POST                                             | No                |
+| EVERGREEN | N/A       | Selenium - CAPTCHA                               | N/A               |
 
 ### Usage
 
