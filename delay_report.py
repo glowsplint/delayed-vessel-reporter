@@ -13,7 +13,47 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 
-class CMAExtractor:
+class BaseExtractor:
+    """
+    Base Extractor class where all other Extractor classes inherit from.
+    Extracts information from the carrier Portal.
+
+    Methods
+    -------
+    get_location_id:
+        Gets the countryID mappings via the CountryID API in order to use the Search Schedules API.
+
+    prepare:
+        A single query to the API can provide information to multiple lines on the delay_sheet.
+        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
+            delay_sheet. This reduces the total number of calls made to the Search Schedules API and prevents
+            duplication of API calls.
+
+    call_api:
+        Makes calls to the respective API, using information from the prepare method as parameters in the
+        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
+
+    extract:
+        Extracts information from the JSON responses from the call_api method and assembles the final dataframe.
+    """
+
+    def __init__(self):
+        pass
+
+    def get_location_id(self):
+        pass
+
+    def prepare(self):
+        pass
+
+    def call_api(self):
+        pass
+
+    def extract(self):
+        pass
+
+
+class CMAExtractor(BaseExtractor):
     def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
         self.carrier_mapping = carrier_mapping
         # Get the CMA delay sheet
@@ -38,11 +78,6 @@ class CMAExtractor:
         self.session = requests.Session()
 
     def get_location_id(self):
-        """
-        Checks if the query for locationID has been done today.
-        If it has been done, skips it and uses the existing locationID JSON file.
-        Otherwise, queries the locationID API.
-        """
         port_id_file = 'CMA portID.json'
         if port_id_file not in os.listdir():
             def get_id(response):
@@ -81,11 +116,6 @@ class CMAExtractor:
             read_config(self, 'port_id', port_id_file)
 
     def prepare(self):
-        """
-        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
-            delay_sheet.
-        """
-        # Further filter
         key = ['pol_name', 'pod_name']
         self.reduced_df = self.delay_sheet.drop_duplicates(key)[
             key].sort_values(key)
@@ -98,10 +128,7 @@ class CMAExtractor:
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        """
-        Makes calls to the CMA Web API, using information from the prepare method as parameters in the
-        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
-        """
+
         def get_schedules(pol_code: tuple, pod_code: tuple):
             pol_1, pol_2, pol_3 = pol_code
             pod_1, pod_2, pod_3 = pod_code
@@ -168,19 +195,25 @@ class CMAExtractor:
                                                         'updated_eta': updated_eta}))
 
         merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
-        self.response_df = pd.concat(
-            list_of_dataframes).drop_duplicates(merge_key)
-        self.response_df.sort_values(['updated_eta'], inplace=True)
-        self.response_df.reset_index(drop=True, inplace=True)
+        if len(list_of_dataframes):
+            self.response_df = pd.concat(
+                list_of_dataframes).drop_duplicates(merge_key)
+            self.response_df.sort_values(['updated_eta'], inplace=True)
+            self.response_df.reset_index(drop=True, inplace=True)
 
-        self.delay_sheet = (self.delay_sheet.reset_index().
-                            merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
-                                  on=merge_key, how='left')
-                            .set_index('index')
-                            .copy())
+            self.delay_sheet = (self.delay_sheet.reset_index().
+                                merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                      on=merge_key, how='left')
+                                .set_index('index')
+                                .copy())
+        else:
+            self.response_df = pd.DataFrame({
+                'pol_name': [], 'pod_name': [],
+                'Vessel': [], 'Voyage': [],
+                'updated_eta': [], 'updated_etd': []})
 
 
-class ANLExtractor:
+class ANLExtractor(BaseExtractor):
     def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
         self.carrier_mapping = carrier_mapping
         # Get the ANL delay sheet
@@ -205,11 +238,6 @@ class ANLExtractor:
         self.session = requests.Session()
 
     def get_location_id(self):
-        """
-        Checks if the query for locationID has been done today.
-        If it has been done, skips it and uses the existing locationID JSON file.
-        Otherwise, queries the locationID API.
-        """
         port_id_file = 'ANL portID.json'
         if port_id_file not in os.listdir():
             def get_id(response):
@@ -248,11 +276,6 @@ class ANLExtractor:
             read_config(self, 'port_id', port_id_file)
 
     def prepare(self):
-        """
-        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
-            delay_sheet.
-        """
-        # Further filter
         key = ['pol_name', 'pod_name']
         self.reduced_df = self.delay_sheet.drop_duplicates(key)[
             key].sort_values(key)
@@ -265,10 +288,6 @@ class ANLExtractor:
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        """
-        Makes calls to the ANL Web API, using information from the prepare method as parameters in the
-        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
-        """
         def get_schedules(pol_code: tuple, pod_code: tuple):
             pol_1, pol_2, pol_3 = pol_code
             pod_1, pod_2, pod_3 = pod_code
@@ -291,14 +310,6 @@ class ANLExtractor:
                     self.response_jsons.append(f.read())
 
     def extract(self):
-        """
-        Extracts information from the HTML responses from the call_api method and assembles the final dataframe.
-
-        Extracts data from all columns of a dataframe.
-        Generates a dataframe for every table
-        Loop over all tables -> dataframes
-        Concatenates all these dataframes into one dataframe
-        """
         self.response_intermediate = [pd.read_html(
             response) for response in self.response_jsons]
         reverse_port_id = {v[0].split(
@@ -335,19 +346,25 @@ class ANLExtractor:
                                                         'updated_eta': updated_eta}))
 
         merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
-        self.response_df = pd.concat(
-            list_of_dataframes).drop_duplicates(merge_key)
-        self.response_df.sort_values(['updated_eta'], inplace=True)
-        self.response_df.reset_index(drop=True, inplace=True)
+        if len(list_of_dataframes):
+            self.response_df = pd.concat(
+                list_of_dataframes).drop_duplicates(merge_key)
+            self.response_df.sort_values(['updated_eta'], inplace=True)
+            self.response_df.reset_index(drop=True, inplace=True)
 
-        self.delay_sheet = (self.delay_sheet.reset_index().
-                            merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
-                                  on=merge_key, how='left')
-                            .set_index('index')
-                            .copy())
+            self.delay_sheet = (self.delay_sheet.reset_index().
+                                merge(self.response_df[merge_key + ['updated_eta', 'updated_etd']],
+                                      on=merge_key, how='left')
+                                .set_index('index')
+                                .copy())
+        else:
+            self.response_df = pd.DataFrame({
+                'pol_name': [], 'pod_name': [],
+                'Vessel': [], 'Voyage': [],
+                'updated_eta': [], 'updated_etd': []})
 
 
-class HamburgExtractor:
+class HamburgExtractor(BaseExtractor):
     def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
         self.carrier_mapping = carrier_mapping
         # Get the Hamburg delay sheet
@@ -371,21 +388,12 @@ class HamburgExtractor:
         self.session = requests.Session()
 
     def prepare(self):
-        """
-        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
-            delay_sheet.
-        """
-        # Further filter
         key = ['pol_name', 'pod_name']
         self.reduced_df = self.delay_sheet.drop_duplicates(key)[
             key].sort_values(key)
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        """
-        Makes calls to the BigSchedules Web API, using information from the prepare method as parameters in the
-        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
-        """
         def get_schedules(pol_name: str, pod_name: str, i):
             url = "https://api.hamburgsud-line.com/v1/schedules/point-to-point"
             headers = {'x-api-key': 'LJj1A6oZO6OjnqxQLogPaiSC2QrDtT2y'}
@@ -411,9 +419,6 @@ class HamburgExtractor:
                         self.response_jsons.append(json.load(f))
 
     def extract(self):
-        """
-        Extracts information from the JSON responses from the call_api method and assembles the final dataframe.
-        """
         def get_relevant_fields(response, i):
             def get_vv(data, i, total_legs):
                 for j in range(total_legs):
@@ -454,7 +459,7 @@ class HamburgExtractor:
             self.delay_sheet.updated_etd.str[:10])
 
 
-class OOCLExtractor:
+class OOCLExtractor(BaseExtractor):
     def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
         # Get the carrier mapping
         self.carrier_mapping = carrier_mapping
@@ -475,15 +480,10 @@ class OOCLExtractor:
                                                    pod_name=lambda x: x['Port of discharge'].apply(lambda y: self.port_mapping.get(y))).copy()
 
         self.interval = interval
-        self.oocl_port_id = {}
+        self.port_id = {}
         self.session = requests.Session()
 
     def get_location_id(self):
-        """
-        Checks if the query for locationID has been done today.
-        If it has been done, skips it and uses the existing locationID JSON file.
-        Otherwise, queries the locationID API.
-        """
         if 'OOCL portID.json' not in os.listdir():
             def get_id(response):
                 results = response.json().get('data').get('results')
@@ -509,42 +509,33 @@ class OOCLExtractor:
 
             oocl_locations = (list(self.delay_sheet.pol_name.unique(
             )) + list(self.delay_sheet.pod_name.unique()))
-            self.oocl_port_id = {location: get_id(
+            self.port_id = {location: get_id(
                 query_id(location)) for location in tqdm(oocl_locations)}
-            if len(self.oocl_port_id):
-                write_json(self.oocl_port_id, 'OOCL portID.json')
+            if len(self.port_id):
+                write_json(self.port_id, 'OOCL portID.json')
 
             # PODs with no pod_id
             exception_cases = [
-                k for k, v in self.oocl_port_id.items() if v is None]
+                k for k, v in self.port_id.items() if v is None]
             if len(exception_cases):
                 write_json(exception_cases, 'oocl_exceptions.txt')
         else:
-            read_config(self, 'oocl_port_id', 'OOCL portID.json')
+            read_config(self, 'port_id', 'OOCL portID.json')
 
     def prepare(self):
-        """
-        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
-            delay_sheet.
-        """
-        # Further filter by POL-Vessel-Voyage to get ETD, POD-Vessel-Voyage to get ETA
         key = ['pol_name', 'pod_name']
         self.reduced_df = self.delay_sheet.drop_duplicates(key)[
             key].sort_values(key)
 
         self.reduced_df['pol_code'] = self.reduced_df.pol_name.map(
-            self.oocl_port_id)
+            self.port_id)
         self.reduced_df['pod_code'] = self.reduced_df.pod_name.map(
-            self.oocl_port_id)
+            self.port_id)
 
         # Unable to handle those with no pod_id in BigSchedules Web; dropping these lines
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        """
-        Makes calls to the BigSchedules Web API, using information from the prepare method as parameters in the
-        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
-        """
         def get_schedules(pol_locationID: str, pod_locationID: str, pol_name: str, pod_name: str):
             url = f"http://moc.oocl.com/nj_prs_wss/mocss/secured/supportData/nsso/searchHubToHubRoute"
             headers = {
@@ -598,9 +589,6 @@ class OOCLExtractor:
                     self.response_jsons.append(json.load(f))
 
     def extract(self):
-        """
-        Extracts information from the JSON responses from the call_api method and assembles the final dataframe.
-        """
         def get_relevant_fields(response, i):
             def get_vv_etd(response, i):
                 for j in range(len(response['data']['standardRoutes'][i]['Legs'])):
@@ -633,12 +621,12 @@ class OOCLExtractor:
                                           for i in range(len(response['data']['standardRoutes']))]))
 
         # Create reverse mapping from port_code to name
-        oocl_port_id_reversed = {v: k for k, v in self.oocl_port_id.items()}
+        port_id_reversed = {v: k for k, v in self.port_id.items()}
 
         self.response_df['pol_name'] = self.response_df.pol_code.map(
-            oocl_port_id_reversed)
+            port_id_reversed)
         self.response_df['pod_name'] = self.response_df.pod_code.map(
-            oocl_port_id_reversed)
+            port_id_reversed)
 
         self.response_df = self.response_df.sort_values('updated_eta').drop_duplicates(
             ['pol_code', 'pod_code', 'Voyage', 'Vessel'])
@@ -656,30 +644,8 @@ class OOCLExtractor:
             self.delay_sheet.updated_etd.str[:8], format='%Y%m%d')
 
 
-class MSCExtractor:
-    """
-    Extracts information from the MSC Portal.
-
-    Methods
-    -------
-    get_location_id:
-        Gets the countryID mappings via the CountryID API in order to use the Search Schedules API.
-
-    prepare:
-        A single query to the Search Schedules API can provide information to multiple lines on the delay_sheet.
-        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
-            delay_sheet. This reduces the total number of calls made to the Search Schedules API and prevents
-            duplication of API calls.
-
-    call_api:
-        Makes calls to the Search Schedules API, using information from the prepare method as parameters in the
-        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
-
-    extract:
-        Extracts information from the JSON responses from the call_api method and assembles the final dataframe.
-    """
-
-    def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple):
+class MSCExtractor(BaseExtractor):
+    def __init__(self, main_delay_sheet: pd.DataFrame, interval: tuple, carrier_mapping: dict):
         # Get the MSC delay sheet
         self.delay_sheet = (main_delay_sheet.loc[main_delay_sheet['Fwd Agent'] == 'MSC']
                             .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
@@ -698,13 +664,6 @@ class MSCExtractor:
         self.session = requests.Session()
 
     def get_location_id(self):
-        """
-        Checks if the query for countryID has been done today.
-        If it has been done, skips it and uses the existing countryID JSON file.
-        Otherwise, queries the countryID API.
-
-        This API call does not require a cookie.
-        """
         if 'MSC locationID.json' not in os.listdir():
             def query_id(port: str):
                 url = f"https://www.msc.com/api/schedules/autocomplete?q={port}"
@@ -718,42 +677,33 @@ class MSCExtractor:
                              + list(self.delay_sheet.pod_name.unique()))
             location_code_responses = {location: query_id(
                 location) for location in tqdm(msc_locations)}
-            self.msc_port_id = {k: get_id(v)
-                                for k, v in location_code_responses.items()}
-            if len(self.msc_port_id):
-                write_json(self.msc_port_id, 'MSC locationID.json')
+            self.port_id = {k: get_id(v)
+                            for k, v in location_code_responses.items()}
+            if len(self.port_id):
+                write_json(self.port_id, 'MSC locationID.json')
 
             # PODs with no pod_id
             exception_cases = [
-                k for k, v in self.msc_port_id.items() if v is None]
+                k for k, v in self.port_id.items() if v is None]
             if len(exception_cases):
                 write_json(exception_cases, 'MSC exceptions.txt')
         else:
-            read_config(self, 'msc_port_id', 'MSC locationID.json')
+            read_config(self, 'port_id', 'MSC locationID.json')
 
     def prepare(self):
-        """
-        Further filters self.delay_sheet to a smaller list of searches needed to fulfill all the lines on the
-            delay_sheet. Also maps the UNLOCODE to their respective countryID.
-        """
-        # Further filter by POL-Vessel-Voyage to get ETD, POD-Vessel-Voyage to get ETA
         key = ['pol_name', 'pod_name']
         self.reduced_df = self.delay_sheet.drop_duplicates(key)[
             key].sort_values(key)
 
         self.reduced_df['pol_code'] = self.reduced_df.pol_name.map(
-            self.msc_port_id)
+            self.port_id)
         self.reduced_df['pod_code'] = self.reduced_df.pod_name.map(
-            self.msc_port_id)
+            self.port_id)
 
         # Unable to handle those with no pod_id in MSC; dropping these lines
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        """
-        Makes calls to the Search Schedules API, using information from the prepare method as parameters in the
-        API request. Also saves the API responses into a subdirectory "responses/<today_date>".
-        """
         def get_schedules(etd: str, pol: str, pod: str):
             url = f"https://www.msc.com/api/schedules/search?WeeksOut=8&DirectRoutes=false&Date={etd}&From={pol}&To={pod}"
             headers = {
@@ -786,9 +736,6 @@ class MSCExtractor:
                     self.response_jsons.append(json.load(f))
 
     def extract(self):
-        """
-        Extracts information from the JSON responses from the call_api method and assembles the final dataframe.
-        """
         def get_relevant_fields(response, i):
             return {
                 'pol_code': response[0]['Sailings'][i]['PortOfLoadId'],
@@ -805,13 +752,13 @@ class MSCExtractor:
                                           for i in range(len(response[0]['Sailings']))]))
 
         # Create reverse mapping from port_code to name
-        msc_port_id_reversed = {v: k for k, v in self.msc_port_id.items()}
+        port_id_reversed = {v: k for k, v in self.port_id.items()}
 
         # Add additional columns to response_df
         self.response_df['pol_name'] = self.response_df.pol_code.map(
-            msc_port_id_reversed)
+            port_id_reversed)
         self.response_df['pod_name'] = self.response_df.pod_code.map(
-            msc_port_id_reversed)
+            port_id_reversed)
 
         # Merge results back to original dataframe
         merge_key = ['pol_name', 'pod_name', 'Vessel', 'Voyage']
@@ -881,7 +828,7 @@ class DelayReport:
 
     Methods
     -------
-    run_oocl, run_msc, run_g2:
+    run:
         Runs the corresponding extraction by instantiating a relevant Extractor class.
 
     calculate_deltas:
@@ -902,25 +849,16 @@ class DelayReport:
         self.saved_file = ''
 
         # Read configurations
-        read_config(self, 'config', 'data/config.json')
+        self.config = {v['Field']: v['Value'] for k, v in pd.read_excel(
+            'data/Configurations.xlsx').to_dict('index').items()}
 
-        # Used to map carrier names to the ones BigSchedules uses and supports
-        read_config(self, 'carrier_mapping', 'data/carrier_mapping.json')
+        # Used to map Fwd Agent column to the respective carrier portals
+        self.carrier_mapping = {v['Fwd Agent']: v['Carrier'] for k, v in pd.read_excel(
+            'data/Carrier Mapping.xlsx').to_dict('index').items()}
 
         # Random interval in seconds
         self.interval = (self.config.get('randomiser_lower_interval'),
                          self.config.get('randomiser_upper_interval'))
-
-        # Prepare UNLOCODE to port name mapping
-        self.port_mapping = (
-            pd.concat([pd.read_csv(p, usecols=[1, 2, 4, 5], engine='python', names=[
-                      'country', 'port', 'name', 'subdiv']) for p in Path('data').glob("*UNLOCODE CodeListPart*")])
-            .query('port == port')
-            .assign(uncode=lambda x: x.country.str.cat(x.port),
-                    full_name=lambda x: np.where(x.subdiv.notnull(), x.name.str.cat(x.subdiv, sep=", "), x.name))
-            .drop_duplicates('uncode')
-            .set_index('uncode')
-            .to_dict('index'))
 
         # Read the vessel delay tracking file
         self.xl = pd.ExcelFile(self.config['delay_filename'])
@@ -956,65 +894,6 @@ class DelayReport:
             pass
         os.chdir(today_path)
 
-    def run_cma(self):
-        if self.config.get('run_cma'):
-            print('Preparing for CMA extraction...')
-            self.cma_extractor = CMAExtractor(
-                self.clean_delay_sheet, self.interval, self.carrier_mapping)
-            self.cma_extractor.get_location_id()
-            self.cma_extractor.prepare()
-            print('Extracting CMA information from their website...')
-            self.cma_extractor.call_api()
-            self.cma_extractor.extract()
-            self.main_delay_sheet.update(self.cma_extractor.delay_sheet)
-
-    def run_anl(self):
-        if self.config.get('run_anl'):
-            print('Preparing for ANL extraction...')
-            self.anl_extractor = ANLExtractor(
-                self.clean_delay_sheet, self.interval, self.carrier_mapping)
-            self.anl_extractor.get_location_id()
-            self.anl_extractor.prepare()
-            print('Extracting ANL information from their website...')
-            self.anl_extractor.call_api()
-            self.anl_extractor.extract()
-            self.main_delay_sheet.update(self.anl_extractor.delay_sheet)
-
-    def run_hamburg(self):
-        if self.config.get('run_hamburg'):
-            print('Preparing for Hamburg extraction...')
-            self.hamburg_extractor = HamburgExtractor(
-                self.clean_delay_sheet, self.interval, self.carrier_mapping)
-            self.hamburg_extractor.prepare()
-            print('Extracting Hamburg information from their website...')
-            self.hamburg_extractor.call_api()
-            self.hamburg_extractor.extract()
-            self.main_delay_sheet.update(self.hamburg_extractor.delay_sheet)
-
-    def run_oocl(self):
-        if self.config.get('run_oocl'):
-            print('Preparing for OOCL extraction...')
-            self.oocl_extractor = OOCLExtractor(
-                self.clean_delay_sheet, self.interval, self.carrier_mapping)
-            self.oocl_extractor.get_location_id()
-            self.oocl_extractor.prepare()
-            print('Extracting OOCL information from their website...')
-            self.oocl_extractor.call_api()
-            self.oocl_extractor.extract()
-            self.main_delay_sheet.update(self.oocl_extractor.delay_sheet)
-
-    def run_msc(self):
-        if self.config.get('run_msc'):
-            print('Preparing for MSC extraction...')
-            self.msc_extractor = MSCExtractor(
-                self.clean_delay_sheet, self.interval)
-            self.msc_extractor.get_location_id()
-            self.msc_extractor.prepare()
-            print('Extracting MSC information from their website...')
-            self.msc_extractor.call_api()
-            self.msc_extractor.extract()
-            self.main_delay_sheet.update(self.msc_extractor.delay_sheet)
-
     def run_g2(self):
         if self.config.get('run_g2'):
             print('Extracting G2Schedules...')
@@ -1022,6 +901,20 @@ class DelayReport:
                 'g2_filename'), self.clean_delay_sheet)
             self.g2_extractor.extract()
             self.main_delay_sheet.update(self.g2_extractor.delay_sheet)
+
+    def run(self, carrier_name: str, extractor_name: str, extractor_class: BaseExtractor):
+        if self.config.get(f'run_{carrier_name.lower()}'):
+            print(f'Preparing for {carrier_name} extraction...')
+            setattr(self, extractor_name, extractor_class(
+                self.clean_delay_sheet, self.interval, self.carrier_mapping))
+            getattr(self, extractor_name).get_location_id()
+            getattr(self, extractor_name).prepare()
+            print(
+                f'Extracting {carrier_name} information from their website...')
+            getattr(self, extractor_name).call_api()
+            getattr(self, extractor_name).extract()
+            self.main_delay_sheet.update(
+                getattr(self, extractor_name).delay_sheet)
 
     def calculate_deltas(self):
         # Format the dates correctly via strftime
@@ -1055,7 +948,6 @@ class DelayReport:
         ), 'No. of days delayed ETA'] = 0
 
     def output(self):
-        # Output the excel file
         self.saved_file = f"Vessel Delay Tracking - {datetime.today().strftime('%d.%m.%Y')}.xlsx"
         self.main_delay_sheet.to_excel(
             Path('../../' + self.saved_file), index=False)
@@ -1075,11 +967,11 @@ def read_config(instance: object, attr_name: str, path_to_config: str):
 
 if __name__ == "__main__":
     delay_report = DelayReport()
-    delay_report.run_cma()
-    delay_report.run_anl()
-    delay_report.run_hamburg()
-    delay_report.run_oocl()
-    delay_report.run_msc()
+    delay_report.run('CMA', 'cma_extractor', CMAExtractor)
+    delay_report.run('ANL', 'anl_extractor', ANLExtractor)
+    delay_report.run('Hamburg', 'hamburg_extractor', HamburgExtractor)
+    delay_report.run('OOCL', 'oocl_extractor', OOCLExtractor)
+    delay_report.run('MSC', 'msc_extractor', MSCExtractor)
     delay_report.run_g2()
     delay_report.calculate_deltas()
     delay_report.mask_bol()

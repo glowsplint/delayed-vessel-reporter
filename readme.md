@@ -13,6 +13,8 @@ The script is written in a modular approach to increase ease of maintenance and 
    - Uses randomised timing for API requests
 2. Modular
    - If one component breaks, you can always disable it without affecting the other modules
+3. Smart running
+   - Saves progress and can continue on failure
 
 | Carrier   | Status    | Approach                                         | Cookies required? |
 | --------- | --------- | ------------------------------------------------ | ----------------- |
@@ -21,11 +23,11 @@ The script is written in a modular approach to increase ease of maintenance and 
 | OOCL      | Completed | GET to locationID API <br> POST to Schedules API | No <br> Yes       |
 | HAMBURG   | Completed | GET direct                                       | No                |
 | ANL       | Completed | GET with pd.read_html                            |                   |
-| HAPAG     |           |                                                  |                   |
 | CMA       | Completed | GET with pd.read_html                            |                   |
+| HAPAG     | Next up   |                                                  |                   |
 | ONE       |           | POST                                             |                   |
-| EVERGREEN |           | Selenium - CAPTCHA                               |                   |
 | COSCO     |           |                                                  |                   |
+| EVERGREEN |           | Selenium - CAPTCHA                               |                   |
 
 ### Usage
 
