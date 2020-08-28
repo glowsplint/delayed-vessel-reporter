@@ -24,8 +24,8 @@ The script is written in a modular approach to increase ease of maintenance and 
 | HAMBURG   | Completed | GET direct                                       | No                |
 | ANL       | Completed | GET with pd.read_html                            | No                |
 | CMA       | Completed | GET with pd.read_html                            | No                |
-| HAPAG     | Next up   |                                                  |                   |
-| ONE       |           | POST                                             |                   |
+| HAPAG     | N/A       | N/A                                              | N/A               |
+| ONE       | Completed | POST                                             | No                |
 | COSCO     | Completed | POST                                             | No                |
 | EVERGREEN | N/A       | Selenium - CAPTCHA                               | N/A               |
 
@@ -35,3 +35,4 @@ The script is written in a modular approach to increase ease of maintenance and 
 
 1. Initial cookie extraction
 2. Increase maintainability
+3. Fix bugs
