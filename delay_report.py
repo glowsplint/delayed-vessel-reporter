@@ -61,7 +61,6 @@ class ONEExtractor(BaseExtractor):
         self.session = requests.Session()
 
         self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'ONE']}")
-                            .replace({'Fwd Agent': self.carrier_mapping})
                             .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
                                    'No. of days delayed ETA', 'Reason of Delay'], axis=1)
                             .copy())
@@ -83,13 +82,12 @@ class ONEExtractor(BaseExtractor):
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        # TODO: split this function in two
         def get_schedules(pol_name: str, pod_name: str):
             url = "https://ecomm.one-line.com/ecom/CUP_HOM_3001GS.do"
 
             first_day = datetime.today().replace(day=1).strftime('%Y-%m-%d')
-            last_day = datetime.today().replace(day=25).replace(
-                month=datetime.today().month+1).strftime('%Y-%m-%d')
+            last_day = datetime.today().replace(day=1).replace(
+                month=datetime.today().month+3).strftime('%Y-%m-%d')
 
             payload = f'f_cmd=3&por_cd={pol_name}&del_cd={pod_name}&rcv_term_cd=Y&de_term_cd=Y&frm_dt={first_day}&to_dt={last_day}&ts_ind=&skd_tp=L'
             headers = {
@@ -171,7 +169,6 @@ class COSCOExtractor(BaseExtractor):
         self.session = requests.Session()
 
         self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'COSCO']}")
-                            .replace({'Fwd Agent': self.carrier_mapping})
                             .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
                                    'No. of days delayed ETA', 'Reason of Delay'], axis=1)
                             .copy())
@@ -179,7 +176,10 @@ class COSCOExtractor(BaseExtractor):
         self.port_mapping = {v['Port Code']: (v['Port Name'], v['Port Number']) for k, v in (pd.read_excel('../../data/Port Code Mapping - COSCO.xlsx')
                                                                                              .to_dict('index').items())}
 
-        self.delay_sheet = self.delay_sheet.assign(pol_name=lambda x: x['Port of Loading'].apply(lambda y: self.port_mapping.get(y)[0]),
+        self.delay_sheet = self.delay_sheet.assign(pol=lambda x: x['Port of Loading'],
+                                                   pod=lambda x: x['Port of discharge'],
+                                                   pol_name=lambda x: x['Port of Loading'].apply(
+                                                       lambda y: self.port_mapping.get(y)[0]),
                                                    pod_name=lambda x: x['Port of discharge'].apply(
                                                        lambda y: self.port_mapping.get(y)[0]),
                                                    pol_code=lambda x: x['Port of Loading'].apply(
@@ -187,7 +187,7 @@ class COSCOExtractor(BaseExtractor):
                                                    pod_code=lambda x: x['Port of discharge'].apply(lambda y: self.port_mapping.get(y)[1])).copy()
 
     def prepare(self):
-        key = ['pol_name', 'pod_name', 'pol_code', 'pod_code']
+        key = ['pol', 'pod', 'pol_name', 'pod_name', 'pol_code', 'pod_code']
         self.reduced_df = self.delay_sheet.drop_duplicates(key)[
             key].sort_values(key)
 
@@ -197,11 +197,11 @@ class COSCOExtractor(BaseExtractor):
         def get_schedules(pol_code: str, pod_code: str, pol_name: str, pod_name: str):
             url = "https://elines.coscoshipping.com/ebschedule/public/purpoShipmentWs"
             payload = {
-                "fromDate": f"{datetime.today().replace(day=1).strftime('%Y-%m-%d')}",
+                "fromDate": f"{datetime.today().strftime('%Y-%m-%d')}",
                 "pickup": "B",
                 "delivery": "B",
                 "estimateDate": "D",
-                "toDate": f"{(datetime.today().replace(day=1) + timedelta(days=89)).strftime('%Y-%m-%d')}",
+                "toDate": f"{(datetime.today() + timedelta(days=89)).strftime('%Y-%m-%d')}",
                 "originCityUuid": f"{pol_code}",
                 "destinationCityUuid": f"{pod_code}",
                 "originCity": f"{pol_name}",
@@ -228,7 +228,7 @@ class COSCOExtractor(BaseExtractor):
 
         self.response_jsons = []
         for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
-            response_filename = f'COSCO {int(row.pol_code)}-{int(row.pod_code)}.json'
+            response_filename = f'COSCO {row.pol}-{row.pod}.json'
             if response_filename not in os.listdir():
                 response = get_schedules(int(row.pol_code), int(
                     row.pod_code), row.pol_name, row.pod_name)
@@ -294,7 +294,6 @@ class CMAExtractor(BaseExtractor):
         self.session = requests.Session()
 
         self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'CMA']}")
-                            .replace({'Fwd Agent': carrier_mapping})
                             .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
                                    'No. of days delayed ETA', 'Reason of Delay'], axis=1)
                             .copy())
@@ -406,7 +405,13 @@ class CMAExtractor(BaseExtractor):
                 pol = table.iloc[1].str.split("  ").str[0][1:].str.split(
                     ", ").str[0].apply(reverse_port_id.get)
 
-                if table.shape[0] == 10:
+                if table.shape[0] == 22:
+                    pod_row, updated_eta_row = (21, 20)
+                elif table.shape[0] == 18:
+                    pod_row, updated_eta_row = (17, 16)
+                elif table.shape[0] == 14:
+                    pod_row, updated_eta_row = (13, 12)
+                elif table.shape[0] == 10:
                     pod_row, updated_eta_row = (9, 8)
                 else:
                     pod_row, updated_eta_row = (5, 4)
@@ -450,7 +455,6 @@ class ANLExtractor(BaseExtractor):
         self.session = requests.Session()
 
         self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'ANL']}")
-                            .replace({'Fwd Agent': carrier_mapping})
                             .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
                                    'No. of days delayed ETA', 'Reason of Delay'], axis=1)
                             .copy())
@@ -554,7 +558,13 @@ class ANLExtractor(BaseExtractor):
                 pol = table.iloc[1].str.split("  ").str[0][1:].str.split(
                     ", ").str[0].apply(reverse_port_id.get)
 
-                if table.shape[0] == 10:
+                if table.shape[0] == 22:
+                    pod_row, updated_eta_row = (21, 20)
+                elif table.shape[0] == 18:
+                    pod_row, updated_eta_row = (17, 16)
+                elif table.shape[0] == 14:
+                    pod_row, updated_eta_row = (13, 12)
+                elif table.shape[0] == 10:
                     pod_row, updated_eta_row = (9, 8)
                 else:
                     pod_row, updated_eta_row = (5, 4)
@@ -664,7 +674,7 @@ class HamburgExtractor(BaseExtractor):
 
         self.response_df = pd.DataFrame(([get_relevant_fields(response, i)
                                           for response in self.response_jsons
-                                          if len(response)
+                                          if isinstance(response, list)
                                           for i in range(len(response))]))
         if len(self.response_df):
             self.response_df = self.response_df.sort_values('updated_eta').drop_duplicates(
@@ -695,7 +705,6 @@ class OOCLExtractor(BaseExtractor):
         self.session = requests.Session()
 
         self.delay_sheet = (main_delay_sheet.query(f"`Fwd Agent` in {[k for k,v in self.carrier_mapping.items() if v == 'OOCL']}")
-                            .replace({'Fwd Agent': self.carrier_mapping})
                             .drop(['updated_etd', 'updated_eta', 'No. of days delayed ETD',
                                    'No. of days delayed ETA', 'Reason of Delay'], axis=1)
                             .copy())
@@ -703,7 +712,10 @@ class OOCLExtractor(BaseExtractor):
         self.port_mapping = {v['Port Code']: v['Port Name'] for k, v in (pd.read_excel('../../data/Port Code Mapping - OOCL.xlsx')
                                                                          .to_dict('index').items())}
 
-        self.delay_sheet = self.delay_sheet.assign(pol_name=lambda x: x['Port of Loading'].apply(lambda y: self.port_mapping.get(y)),
+        self.delay_sheet = self.delay_sheet.assign(pol=lambda x: x['Port of Loading'],
+                                                   pod=lambda x: x['Port of discharge'],
+                                                   pol_name=lambda x: x['Port of Loading'].apply(
+                                                       lambda y: self.port_mapping.get(y)),
                                                    pod_name=lambda x: x['Port of discharge'].apply(lambda y: self.port_mapping.get(y))).copy()
 
     def get_location_id(self):
@@ -745,7 +757,7 @@ class OOCLExtractor(BaseExtractor):
             read_config(self, 'port_id', 'OOCL portID.json')
 
     def prepare(self):
-        key = ['pol_name', 'pod_name']
+        key = ['pol', 'pod', 'pol_name', 'pod_name']
         self.reduced_df = self.delay_sheet.drop_duplicates(key)[
             key].sort_values(key)
 
@@ -796,8 +808,9 @@ class OOCLExtractor(BaseExtractor):
             return self.session.post(url, headers=headers, data=payload)
 
         self.response_jsons = []
+        self.responses = []
         for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
-            response_filename = f'OOCL {int(row.pol_code)}-{int(row.pod_code)}.json'
+            response_filename = f'OOCL {row.pol}-{row.pod}.json'
             if response_filename not in os.listdir():
                 response = get_schedules(int(row.pol_code), int(
                     row.pod_code), row.pol_name, row.pod_name)
@@ -884,7 +897,10 @@ class MSCExtractor(BaseExtractor):
         self.port_mapping = {v['Port Code']: v['Port Name'] for k, v in (pd.read_excel('../../data/Port Code Mapping - MSC.xlsx')
                                                                          .to_dict('index').items())}
 
-        self.delay_sheet = self.delay_sheet.assign(pol_name=lambda x: x['Port of Loading'].apply(lambda y: self.port_mapping.get(y)),
+        self.delay_sheet = self.delay_sheet.assign(pol=lambda x: x['Port of Loading'],
+                                                   pod=lambda x: x['Port of discharge'],
+                                                   pol_name=lambda x: x['Port of Loading'].apply(
+                                                       lambda y: self.port_mapping.get(y)),
                                                    pod_name=lambda x: x['Port of discharge'].apply(lambda y: self.port_mapping.get(y))).copy()
 
     def get_location_id(self):
@@ -915,7 +931,7 @@ class MSCExtractor(BaseExtractor):
             read_config(self, 'port_id', 'MSC locationID.json')
 
     def prepare(self):
-        key = ['pol_name', 'pod_name']
+        key = ['pol', 'pod', 'pol_name', 'pod_name']
         self.reduced_df = self.delay_sheet.drop_duplicates(key)[
             key].sort_values(key)
 
@@ -927,8 +943,9 @@ class MSCExtractor(BaseExtractor):
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        def get_schedules(etd: str, pol: str, pod: str):
-            url = f"https://www.msc.com/api/schedules/search?WeeksOut=8&DirectRoutes=false&Date={etd}&From={pol}&To={pod}"
+        def get_schedules(pol_code: str, pod_code: str):
+            etd = datetime.today().strftime('%Y-%m-%d')
+            url = f"https://www.msc.com/api/schedules/search?WeeksOut=8&DirectRoutes=false&Date={etd}&From={pol_code}&To={pod_code}"
             headers = {
                 'Accept': 'application/json',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36',
@@ -943,12 +960,11 @@ class MSCExtractor(BaseExtractor):
             return self.session.get(url, headers=headers)
 
         self.response_jsons = []
-        first_day = datetime.today().replace(day=1).strftime('%Y-%m-%d')
 
         for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
-            response_filename = f'MSC {int(row.pol_code)}-{int(row.pod_code)}.json'
+            response_filename = f'MSC {row.pol}-{row.pod}.json'
             if response_filename not in os.listdir():
-                response = get_schedules(first_day, int(
+                response = get_schedules(int(
                     row.pol_code), int(row.pod_code))
                 self.response_jsons.append(response.json())
                 if len(response.json()):
@@ -1013,9 +1029,9 @@ class G2Extractor:
         Helper methods to extract the updated_eta and updated_etd given a row in the delay_sheet.
     """
 
-    def __init__(self, g2_file: str, main_delay_sheet: pd.DataFrame):
+    def __init__(self, g2_file: str, main_delay_sheet: pd.DataFrame, config: dict):
         self.schedule = pd.read_excel(
-            Path('../../' + g2_file), skiprows=9, index_col='Unnamed: 0')
+            Path('../../' + g2_file), skiprows=config.get('g2_whitespace_rows', 9), index_col='Unnamed: 0')
         self.delay_sheet = main_delay_sheet.query(
             f"`Fwd Agent` in {['G2OCEAN']}").copy()
         self.port_mapping = {v['Port Code']: v['Port Name'] for k, v in (pd.read_excel('../../data/Port Code Mapping - G2.xlsx')
@@ -1028,7 +1044,11 @@ class G2Extractor:
                 self.schedule.columns.str.contains(row['Vessel']))[0][0] + 1
         except IndexError:
             return np.nan
-        return self.schedule.loc[self.schedule.index == self.port_mapping.get(row['Port of Loading'])].iloc[:, column_index_etd][0]
+        etd = self.schedule.loc[self.schedule.index == self.port_mapping.get(
+            row['Port of Loading'])].iloc[:, column_index_etd][0]
+        if etd is '-':
+            return np.nan
+        return etd
 
     def get_updated_eta(self, row):
         try:
@@ -1037,7 +1057,11 @@ class G2Extractor:
                 self.schedule.columns.str.contains(row['Vessel']))[0][0]
         except IndexError:
             return np.nan
-        return self.schedule.loc[self.schedule.index == self.port_mapping.get(row['Port of discharge'])].iloc[:, column_index_eta][0]
+        eta = self.schedule.loc[self.schedule.index == self.port_mapping.get(
+            row['Port of discharge'])].iloc[:, column_index_eta][0]
+        if eta is '-':
+            return np.nan
+        return eta
 
     def extract(self):
         """
@@ -1095,7 +1119,7 @@ class DelayReport:
         # today_date = datetime.now().strftime('%d.%m.%Y')
         # if today_date not in self.xl.sheet_names:
         #     raise Exception(
-        #         f"The script cannot find today's date ({today_date}) in the Vessel Delay Tracking.xlsx file provided. Please check that the sheets are correctly named - the script will only operate on a sheet with today's date.")
+        # f"The script cannot find today's date ({today_date}) in the Vessel Delay Tracking.xlsx file provided. Please check that the sheets are correctly named - the script will only operate on a sheet with today's date.")
 
         # Assemble the final dataframe to update
         self.main_delay_sheet = self.xl.parse(pd.to_datetime(self.xl.sheet_names,
@@ -1128,19 +1152,18 @@ class DelayReport:
         if self.config.get('run_g2'):
             print('Extracting G2Schedules from file...')
             self.g2_extractor = G2Extractor(self.config.get(
-                'g2_filename'), self.clean_delay_sheet)
+                'g2_filename'), self.clean_delay_sheet, self.config)
             self.g2_extractor.extract()
             self.main_delay_sheet.update(self.g2_extractor.delay_sheet)
 
     def run(self, carrier_name: str, extractor_name: str, extractor_class: BaseExtractor):
         if self.config.get(f'run_{carrier_name.lower()}'):
-            print(f'Preparing for {carrier_name} extraction...')
             setattr(self, extractor_name, extractor_class(
                 self.clean_delay_sheet, self.interval, self.carrier_mapping))
             getattr(self, extractor_name).get_location_id()
             getattr(self, extractor_name).prepare()
             print(
-                f'Extracting {carrier_name} information from their website...')
+                f'Extracting {carrier_name} information...')
             getattr(self, extractor_name).call_api()
             getattr(self, extractor_name).extract()
             self.main_delay_sheet.update(
