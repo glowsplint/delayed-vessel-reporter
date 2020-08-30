@@ -1134,10 +1134,15 @@ class DelayReport:
 
         # Read the vessel delay tracking file
         self.xl = pd.ExcelFile(self.config['delay_filename'])
-        # today_date = datetime.now().strftime('%d.%m.%Y')
-        # if today_date not in self.xl.sheet_names:
-        #     raise Exception(
-        # f"The script cannot find today's date ({today_date}) in the Vessel Delay Tracking.xlsx file provided. Please check that the sheets are correctly named - the script will only operate on a sheet with today's date.")
+        today_date = datetime.now().strftime('%d.%m.%Y')
+        try:
+            if today_date not in self.xl.sheet_names:
+                no_today_date_error = f"FileNotFoundError: The script cannot find today's date ({today_date}) in the Vessel Delay Tracking.xlsx file provided. Please check that the sheets are correctly named - the script will only operate on a sheet with today's date."
+                print(no_today_date_error)
+                raise FileNotFoundError(no_today_date_error)
+        except FileNotFoundError:
+            input()
+            raise FileNotFoundError(no_today_date_error)
 
         # Assemble the final dataframe to update
         self.main_delay_sheet = self.xl.parse(pd.to_datetime(self.xl.sheet_names,
