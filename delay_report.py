@@ -85,11 +85,11 @@ class ONEExtractor(BaseExtractor):
         def get_schedules(pol_name: str, pod_name: str):
             url = "https://ecomm.one-line.com/ecom/CUP_HOM_3001GS.do"
 
-            first_day = datetime.today().replace(day=1).strftime('%Y-%m-%d')
-            last_day = datetime.today().replace(day=1).replace(
+            today = datetime.today().strftime('%Y-%m-%d')
+            last_day = datetime.today().replace(
                 month=datetime.today().month+3).strftime('%Y-%m-%d')
 
-            payload = f'f_cmd=3&por_cd={pol_name}&del_cd={pod_name}&rcv_term_cd=Y&de_term_cd=Y&frm_dt={first_day}&to_dt={last_day}&ts_ind=&skd_tp=L'
+            payload = f'f_cmd=3&por_cd={pol_name}&del_cd={pod_name}&rcv_term_cd=Y&de_term_cd=Y&frm_dt={today}&to_dt={last_day}&ts_ind=&skd_tp=L'
             headers = {
                 'Connection': 'keep-alive',
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -242,14 +242,31 @@ class COSCOExtractor(BaseExtractor):
 
     def extract(self):
         def get_relevant_fields(response, i):
-            return {
-                'pol_code': response['data']['content']['data'][i]['pol'],
-                'pod_code': response['data']['content']['data'][i]['pod'],
-                'Voyage': response['data']['content']['data'][i]['extVoyage'],
-                'Vessel': response['data']['content']['data'][i]['vessel'],
-                'updated_etd': response['data']['content']['data'][i]['etd'],
-                'updated_eta': response['data']['content']['data'][i]['eta']
-            }
+            # If next item id is None, repeat this function
+            # If next item id is not None, extract pod, updated_eta from current item
+            # Then extract pol, updated_eta, vessel, voyage from first item
+            if i+1 < len(response['data']['content']['data']) and response['data']['content']['data'][i+1]['id'] is None:
+                return get_relevant_fields(response, i+1)
+            else:
+                # Go backwards to find first item
+                for item in reversed(response['data']['content']['data'][:i+1]):
+                    if item['id'] is None:
+                        continue
+                    else:
+                        pol_code = item['pol']
+                        updated_etd = item['etd']
+                        voyage = item['extVoyage']
+                        vessel = item['vessel']
+                        break
+
+                return {
+                    'pod_code': response['data']['content']['data'][i]['pod'],
+                    'updated_eta': response['data']['content']['data'][i]['eta'],
+                    'pol_code': pol_code,
+                    'updated_etd': updated_etd,
+                    'Voyage': voyage,
+                    'Vessel': vessel,
+                }
 
         self.response_df = pd.DataFrame(([get_relevant_fields(response, i)
                                           for response in self.response_jsons
@@ -358,26 +375,27 @@ class CMAExtractor(BaseExtractor):
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        def get_schedules(pol_code: tuple, pod_code: tuple):
-            pol_1, pol_2, pol_3 = pol_code
-            pod_1, pod_2, pod_3 = pod_code
-            pod_2 = pod_2.replace(',', '%2C')
-            url = f'https://www.cma-cgm.com/ebusiness/schedules/routing-finder?POLDescription={pol_1}+%3B+{pol_2}+%3B+{pol_3}&PODDescription={pod_1}+%3B+{pod_2}+%3B+{pod_3}&g-recaptcha-response=undefined&actualPOLDescription={pol_1}+%3B+{pol_2}+%3B+{pol_3}&actualPODDescription={pod_1}+%3B+{pod_2}+%3B+{pod_3}'
+        def get_schedules(pol_code: tuple, pod_code: tuple, i: int):
+            # <i> is weeks after today
+            pol_code = ' ; '.join(pol_code)
+            pod_code = ' ; '.join(pod_code)
+            url = f"https://www.cma-cgm.com/ebusiness/schedules/routing-finder?POLDescription={pol_code}&PODDescription={pod_code}&g-recaptcha-response=undefined&actualPOLDescription={pol_code}&actualPODDescription={pod_code}&IsDeparture=True&SearchDate={(datetime.today() + timedelta(weeks=i)).strftime('%#m/%#d/%Y')}&DateRange=2"
             return self.session.get(url)
 
         self.response_jsons = []
         for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
-            response_filename = f'CMA {row.pol_name}-{row.pod_name}.html'
-            if response_filename not in os.listdir():
-                response = get_schedules(row.pol_code, row.pod_code)
-                self.response_jsons.append(response.text)
-                if len(response.text):
-                    with open(response_filename, 'w') as f:
-                        f.write(response.text)
-                time.sleep(random.randint(*self.interval))
-            else:
-                with open(response_filename, 'r') as f:
-                    self.response_jsons.append(f.read())
+            for i in range(0, 4, 3):
+                response_filename = f'CMA {row.pol_name}-{row.pod_name} {i:02}.html'
+                if response_filename not in os.listdir():
+                    response = get_schedules(row.pol_code, row.pod_code, i)
+                    self.response_jsons.append(response.text)
+                    if len(response.text):
+                        with open(response_filename, 'w') as f:
+                            f.write(response.text)
+                    time.sleep(random.randint(*self.interval))
+                else:
+                    with open(response_filename, 'r') as f:
+                        self.response_jsons.append(f.read())
 
     def extract(self):
         """
@@ -519,26 +537,27 @@ class ANLExtractor(BaseExtractor):
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        def get_schedules(pol_code: tuple, pod_code: tuple):
-            pol_1, pol_2, pol_3 = pol_code
-            pod_1, pod_2, pod_3 = pod_code
-            pod_2 = pod_2.replace(',', '%2C')
-            url = f'https://www.anl.com.au/ebusiness/schedules/routing-finder?POLDescription={pol_1}+%3B+{pol_2}+%3B+{pol_3}&PODDescription={pod_1}+%3B+{pod_2}+%3B+{pod_3}&g-recaptcha-response=undefined&actualPOLDescription={pol_1}+%3B+{pol_2}+%3B+{pol_3}&actualPODDescription={pod_1}+%3B+{pod_2}+%3B+{pod_3}'
+        def get_schedules(pol_code: tuple, pod_code: tuple, i: int):
+            # <i> is weeks after today
+            pol_code = ' ; '.join(pol_code)
+            pod_code = ' ; '.join(pod_code)
+            url = f"https://www.anl.com.au/ebusiness/schedules/routing-finder?POLDescription={pol_code}&PODDescription={pod_code}&g-recaptcha-response=undefined&actualPOLDescription={pol_code}&actualPODDescription={pod_code}&IsDeparture=True&SearchDate={(datetime.today() + timedelta(weeks=i)).strftime('%#m/%#d/%Y')}&DateRange=2"
             return self.session.get(url)
 
         self.response_jsons = []
         for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
-            response_filename = f'ANL {row.pol_name}-{row.pod_name}.html'
-            if response_filename not in os.listdir():
-                response = get_schedules(row.pol_code, row.pod_code)
-                self.response_jsons.append(response.text)
-                if len(response.text):
-                    with open(response_filename, 'w') as f:
-                        f.write(response.text)
-                time.sleep(random.randint(*self.interval))
-            else:
-                with open(response_filename, 'r') as f:
-                    self.response_jsons.append(f.read())
+            for i in range(0, 4, 3):
+                response_filename = f'ANL {row.pol_name}-{row.pod_name} {i:02}.html'
+                if response_filename not in os.listdir():
+                    response = get_schedules(row.pol_code, row.pod_code, i)
+                    self.response_jsons.append(response.text)
+                    if len(response.text):
+                        with open(response_filename, 'w') as f:
+                            f.write(response.text)
+                    time.sleep(random.randint(*self.interval))
+                else:
+                    with open(response_filename, 'r') as f:
+                        self.response_jsons.append(f.read())
 
     def extract(self):
         self.response_intermediate = [pd.read_html(
@@ -628,11 +647,12 @@ class HamburgExtractor(BaseExtractor):
         self.reduced_df.dropna(inplace=True)
 
     def call_api(self):
-        def get_schedules(pol_name: str, pod_name: str, i):
+        def get_schedules(pol_name: str, pod_name: str, i: int):
+            # <i> is day in month
             url = "https://api.hamburgsud-line.com/v1/schedules/point-to-point"
             headers = {'x-api-key': 'LJj1A6oZO6OjnqxQLogPaiSC2QrDtT2y'}
             parameters = {
-                "searchDate": datetime.today().replace(day=i).strftime('%Y-%m-%d'),
+                "searchDate": (datetime.today() + timedelta(weeks=i)).strftime('%Y-%m-%d'),
                 "from": pol_name,
                 "to": pod_name
             }
@@ -640,7 +660,7 @@ class HamburgExtractor(BaseExtractor):
 
         self.response_jsons = []
         for row in tqdm(self.reduced_df.itertuples(), total=len(self.reduced_df)):
-            for i in range(1, 30, 7):
+            for i in range(0, 7):
                 response_filename = f'Hamburg {row.pol_name}-{row.pod_name} {i:02}.json'
                 if response_filename not in os.listdir():
                     response = get_schedules(row.pol_name, row.pod_name, i)
@@ -780,15 +800,15 @@ class OOCLExtractor(BaseExtractor):
                 'Accept-Language': 'en-GB,en;q=0.9',
                 'Cookie': 'userSearchHistory=%5B%7B%22origin%22%3A%22Brisbane%2C%20Queensland%2C%20Australia%22%2C%22destination%22%3A%22Bangkok%2C%20Thailand%22%2C%22originId%22%3A%22461802935875046%22%2C%22destinationId%22%3A%22461802935876800%22%2C%22originCountryCode%22%3A%22%22%2C%22destinationCountryCode%22%3A%22%22%2C%22transhipment_PortId%22%3Anull%2C%22transhipment_Port%22%3Anull%2C%22service%22%3Anull%2C%22port_of_LoadId%22%3Anull%2C%22port_of_Load%22%3Anull%2C%22port_of_DischargeId%22%3Anull%2C%22port_of_Discharge%22%3Anull%2C%22origin_Haulage%22%3A%22cy%22%2C%22destination_Haulage%22%3A%22cy%22%2C%22cargo_Nature%22%3A%22dry%22%2C%22sailing%22%3A%22sailing.from%22%2C%22weeks%22%3A%222%22%7D%5D; AcceptCookie=yes; BIGipServeriris4-wss=1597103762.61451.0000; BIGipServerpool_ir4moc=590470802.20480.0000; BIGipServerpool_moc_8011=2022663115.19231.0000'
             }
-            first_day = datetime.today().replace(day=1).strftime('%Y-%m-%d')
+            today = datetime.today().strftime('%Y-%m-%d')
             payload = {
-                "date": f"{first_day}",
-                "displayDate": f"{first_day}",
+                "date": f"{today}",
+                "displayDate": f"{today}",
                 "transhipment_Port": None,
                 "port_of_Load": None,
                 "port_of_Discharge": None,
                 "sailing": "sailing.from",
-                "weeks": "6",
+                "weeks": "12",
                 "transhipment_PortId": None,
                 "service": None,
                 "port_of_LoadId": None,
@@ -836,16 +856,16 @@ class OOCLExtractor(BaseExtractor):
             def get_eta(response, i):
                 for j in range(len(list(reversed(response['data']['standardRoutes'][i]['Legs'])))):
                     if response['data']['standardRoutes'][i]['Legs'][j]['Type'] == "Voyage":
-                        eta = response['data']['standardRoutes'][i]['Legs'][j]['ToETALocalDateTime']['dateStr']
-                        return eta
+                        return response['data']['standardRoutes'][i]['Legs'][j]['ToETALocalDateTime']['dateStr']
                 return ""
 
+            voyage, vessel, updated_etd = get_vv_etd(response, i)
             return {
                 'pol_code': response['data']['standardRoutes'][i]['Legs'][0]['City']['ID'],
                 'pod_code': response['data']['standardRoutes'][i]['Legs'][-1]['City']['ID'],
-                'Voyage': get_vv_etd(response, i)[0],
-                'Vessel': get_vv_etd(response, i)[1],
-                'updated_etd': get_vv_etd(response, i)[2],
+                'Voyage': voyage,
+                'Vessel': vessel,
+                'updated_etd': updated_etd,
                 'updated_eta': get_eta(response, i)
             }
 
