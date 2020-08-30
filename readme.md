@@ -14,35 +14,35 @@ The script is written in a modular approach to increase ease of maintenance and 
 2. Modular
    - If one component breaks, you can always disable it without affecting the other modules
 3. Smart running
-   - Saves progress and can continue on failure
+   - Saves progress within the day and can continue on failure
 
-| Carrier   | Status    | Approach                    | Cookies required? | Duration |
-| --------- | --------- | --------------------------- | ----------------- | -------- |
-| G2OCEAN   | Completed | -                           | -                 | All      |
-| MSC ID    | Completed | GET to countryID API        | No                | -        |
-| MSC       | Completed | GET to Schedules API        | Yes               | 8        |
-| OOCL ID   | Completed | GET to locationID API       | No                | -        |
-| OOCL      | Completed | POST to Schedules API       | No                | 12       |
-| COSCO     | Completed | POST                        | No                | 12       |
-| HAMBURG   | Completed | GET direct                  | No                | 6        |
-| ANL       | Completed | GET with pd.read_html       | No                | 6        |
-| CMA       | Completed | GET with pd.read_html       | No                | 6        |
-| ONE       | Completed | POST                        | No                | 12       |
-| HAPAG     | N/A       | Unable - Dynamic JS loading | N/A               | -        |
-| EVERGREEN | N/A       | Unable - CAPTCHA            | N/A               | -        |
+| Carrier   | Status    | Approach                    | Duration |
+| --------- | --------- | --------------------------- | -------- |
+| G2OCEAN   | Completed | -                           | All      |
+| MSC ID    | Completed | GET to countryID API        | -        |
+| MSC       | Completed | GET to Schedules API        | 8        |
+| OOCL ID   | Completed | GET to locationID API       | -        |
+| OOCL      | Completed | POST to Schedules API       | 12       |
+| COSCO     | Completed | POST                        | 12       |
+| HAMBURG   | Completed | GET direct                  | 6        |
+| ANL       | Completed | GET with pd.read_html       | 6        |
+| CMA       | Completed | GET with pd.read_html       | 6        |
+| ONE       | Completed | POST                        | 12       |
+| HAPAG     | N/A       | Unable - Dynamic JS loading | -        |
+| EVERGREEN | N/A       | Unable - CAPTCHA            | -        |
 
 ### Usage
 
 ### To-do
 
-1. Initial cookie extraction
-2. Add running time in hours minutes and seconds
+1. Wrap individual runs in try-except
 
 ### Sailing schedules
 
 1. MSC +4 weeks from 8 weeks
 2. CMA/ANL +6 weeks from 6 weeks
 3. Hamburg +6 weeks
+4. Modify all to get correct schedules
 
 ### Testing
 

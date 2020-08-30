@@ -798,7 +798,6 @@ class OOCLExtractor(BaseExtractor):
                 'Referer': 'http://moc.oocl.com/nj_prs_wss/',
                 'Accept-Encoding': 'gzip, deflate',
                 'Accept-Language': 'en-GB,en;q=0.9',
-                'Cookie': 'userSearchHistory=%5B%7B%22origin%22%3A%22Brisbane%2C%20Queensland%2C%20Australia%22%2C%22destination%22%3A%22Bangkok%2C%20Thailand%22%2C%22originId%22%3A%22461802935875046%22%2C%22destinationId%22%3A%22461802935876800%22%2C%22originCountryCode%22%3A%22%22%2C%22destinationCountryCode%22%3A%22%22%2C%22transhipment_PortId%22%3Anull%2C%22transhipment_Port%22%3Anull%2C%22service%22%3Anull%2C%22port_of_LoadId%22%3Anull%2C%22port_of_Load%22%3Anull%2C%22port_of_DischargeId%22%3Anull%2C%22port_of_Discharge%22%3Anull%2C%22origin_Haulage%22%3A%22cy%22%2C%22destination_Haulage%22%3A%22cy%22%2C%22cargo_Nature%22%3A%22dry%22%2C%22sailing%22%3A%22sailing.from%22%2C%22weeks%22%3A%222%22%7D%5D; AcceptCookie=yes; BIGipServeriris4-wss=1597103762.61451.0000; BIGipServerpool_ir4moc=590470802.20480.0000; BIGipServerpool_moc_8011=2022663115.19231.0000'
             }
             today = datetime.today().strftime('%Y-%m-%d')
             payload = {
@@ -975,7 +974,6 @@ class MSCExtractor(BaseExtractor):
                 'Sec-Fetch-Dest': 'empty',
                 'Referer': 'https://www.msc.com/search-schedules',
                 'Accept-Language': 'en-GB,en;q=0.9',
-                'Cookie': 'CMSPreferredCulture=en-GB; ASP.NET_SessionId=tht5lkut0asln2goiskoagfe; UrlReferrer=https://www.google.com/; CurrentContact=8b0b2fea-705b-4a4f-b8bf-bb1cd6c982bc; MSCAgencyId=115867; BIGipServerkentico.app~kentico_pool=439883018.20480.0000; _ga=GA1.2.1736073830.1597290148; _gid=GA1.2.1289141279.1597290148; _gcl_au=1.1.345060449.1597290148; __hstc=100935006.13bb76c8a78a8d0a203a993ffef3a3f6.1597290148282.1597290148282.1597290148282.1; hubspotutk=13bb76c8a78a8d0a203a993ffef3a3f6; __hssrc=1; _ym_uid=15972901491036911544; _ym_d=1597290149; _ym_isad=1; newsletter-signup-cookie=temp-hidden; _hjid=3e183004-f562-4048-8b60-daccdf9c187c; _hjUserAttributesHash=2c3b62a0e1cd48bdfd4d01b922060e19; _hjCachedUserAttributes={"attributes":{"mscAgencyId":"115867"},"userId":null}; OptanonAlertBoxClosed=2020-08-13T03:42:45.080Z; CMSCookieLevel=200; VisitorStatus=11062214903; TS0142aef9=0192b4b6225179b1baa3b4d270b71a4eee782a0192338173beabaa471f306c2a13fe854bf6a7ac08ac21924991864aa7728c54559023beabd273d82285d5f943202adb58da417d61813232e89b240828c090f890c6a74dc4adfec38513d13447be4b5b4404d69f964987b7917f731b858f0c9880a139994b98397c4aeb5bd60b0d0e38ec9e5f3c97b13fb184b4e068506e6086954f8a515f2b7239d2e5c1b9c70f61ca74f736355c58648a6036e9b5d06412389ac41221c5cb740df99c84dc2bfef4a530dbc5e2577c189212eebac723d9ee9f98030f4bc6ca7d824ab313ae5fdd1eaa9886; OptanonConsent=isIABGlobal=false&datestamp=Thu+Aug+13+2020+11%3A43%3A36+GMT%2B0800+(Singapore+Standard+Time)&version=5.9.0&landingPath=NotLandingPage&groups=1%3A1%2C2%3A1%2C3%3A1%2C4%3A1%2C0_53017%3A1%2C0_53020%3A1%2C0_53018%3A1%2C0_53019%3A1%2C101%3A1&AwaitingReconsent=false'
             }
             return self.session.get(url, headers=headers)
 
