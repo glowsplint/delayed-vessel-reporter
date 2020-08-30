@@ -1168,28 +1168,36 @@ class DelayReport:
 
     def run_g2(self):
         if self.config.get('run_g2'):
-            print('Extracting G2Schedules from file...')
-            self.g2_extractor = G2Extractor(self.config.get(
-                'g2_filename'), self.clean_delay_sheet, self.config)
-            self.g2_extractor.extract()
-            self.main_delay_sheet.update(self.g2_extractor.delay_sheet)
+            try:
+                print('Extracting G2Schedules from file...')
+                self.g2_extractor = G2Extractor(self.config.get(
+                    'g2_filename'), self.clean_delay_sheet, self.config)
+                self.g2_extractor.extract()
+                self.main_delay_sheet.update(self.g2_extractor.delay_sheet)
+            except:
+                print(
+                    f'There was an error with the G2OCEAN component. Ignoring and continuing...')
 
     def run(self, carrier_name: str, extractor_name: str, extractor_class: BaseExtractor):
         if self.config.get(f'run_{carrier_name.lower()}'):
-            setattr(self, extractor_name, extractor_class(
-                self.clean_delay_sheet, self.interval, self.carrier_mapping))
-            getattr(self, extractor_name).get_location_id()
-            getattr(self, extractor_name).prepare()
-            print(
-                f'Extracting {carrier_name} information...')
-            getattr(self, extractor_name).call_api()
-            getattr(self, extractor_name).extract()
-            self.main_delay_sheet.update(
-                getattr(self, extractor_name).delay_sheet)
+            try:
+                setattr(self, extractor_name, extractor_class(
+                    self.clean_delay_sheet, self.interval, self.carrier_mapping))
+                getattr(self, extractor_name).get_location_id()
+                getattr(self, extractor_name).prepare()
+                print(
+                    f'Extracting {carrier_name} information...')
+                getattr(self, extractor_name).call_api()
+                getattr(self, extractor_name).extract()
+                self.main_delay_sheet.update(
+                    getattr(self, extractor_name).delay_sheet)
+            except:
+                print(
+                    f'There was an error with the {carrier_name} component. Ignoring and continuing...')
 
     def calculate_deltas(self):
         date_columns = ['ETD Date', 'Disport ETA', 'BOL Date',
-                        'updated_etd', 'updated_eta']
+                        'updated_etd', 'updated_eta', 'Req. Delivery Date']
 
         # Convert strings (by default SAP download is parsed as string) to dates
         for column in date_columns[:3]:
@@ -1221,9 +1229,10 @@ class DelayReport:
 
     def output(self):
         self.saved_file = f"Vessel Delay Tracking - {datetime.today().strftime('%d.%m.%Y')}.xlsx"
+        os.chdir('../..')
         self.main_delay_sheet.to_excel(
-            Path('../../' + self.saved_file), index=False)
-        os.startfile(Path('../../' + self.saved_file))
+            Path(self.saved_file), index=False)
+        os.startfile(Path(self.saved_file))
 
 
 # Utility functions
@@ -1238,18 +1247,38 @@ def read_config(instance: object, attr_name: str, path_to_config: str):
 
 
 if __name__ == "__main__":
-    delay_report = DelayReport()
-    delay_report.run('ONE', 'one_extractor', ONEExtractor)
-    delay_report.run('COSCO', 'cosco_extractor', COSCOExtractor)
-    delay_report.run('CMA', 'cma_extractor', CMAExtractor)
-    delay_report.run('ANL', 'anl_extractor', ANLExtractor)
-    delay_report.run('Hamburg', 'hamburg_extractor', HamburgExtractor)
-    delay_report.run('OOCL', 'oocl_extractor', OOCLExtractor)
-    delay_report.run('MSC', 'msc_extractor', MSCExtractor)
-    delay_report.run_g2()
-    delay_report.calculate_deltas()
-    delay_report.mask_bol()
-    delay_report.output()
+    def main():
+        start = time.time()
 
-    print(f'{delay_report.saved_file} has been generated in the current directory. You may close this window.')
-    input()
+        delay_report = DelayReport()
+        delay_report.run('ONE', 'one_extractor', ONEExtractor)
+        delay_report.run('COSCO', 'cosco_extractor', COSCOExtractor)
+        delay_report.run('CMA', 'cma_extractor', CMAExtractor)
+        delay_report.run('ANL', 'anl_extractor', ANLExtractor)
+        delay_report.run('Hamburg', 'hamburg_extractor', HamburgExtractor)
+        delay_report.run('OOCL', 'oocl_extractor', OOCLExtractor)
+        delay_report.run('MSC', 'msc_extractor', MSCExtractor)
+        delay_report.run_g2()
+        delay_report.calculate_deltas()
+        delay_report.mask_bol()
+        delay_report.output()
+
+        end = time.time()
+        duration = end - start
+        hours = int(duration // 3600)
+        minutes = int((duration % 3600) // 60)
+        seconds = int((duration % 3600) % 60)
+
+        if hours:
+            print(f'Script running time: {hours}h {minutes}min {seconds}s')
+        elif minutes:
+            print(f'Script running time: {minutes}min {seconds}s')
+        else:
+            print(f'Script running time: {seconds}s')
+
+        print(f'{delay_report.saved_file} has been generated in the current directory. You may close this window.')
+        if input().lower() == 'rerun':
+            print()
+            main()
+
+    main()

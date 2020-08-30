@@ -31,12 +31,6 @@ The script is written in a modular approach to increase ease of maintenance and 
 | HAPAG     | N/A       | Unable - Dynamic JS loading | -        |
 | EVERGREEN | N/A       | Unable - CAPTCHA            | -        |
 
-### Usage
-
-### To-do
-
-1. Wrap individual runs in try-except
-
 ### Sailing schedules
 
 1. MSC +4 weeks from 8 weeks
@@ -44,9 +38,15 @@ The script is written in a modular approach to increase ease of maintenance and 
 3. Hamburg +6 weeks
 4. Modify all to get correct schedules
 
+5. Provide port pairs
+6. Extract port pairs as reduced_df
+7. reduced_df -> response_df
+8. Concat all response_df
+9. Output
+
 ### Testing
 
-Get Karen to check the delay sheet for Sep
+Get everyone to check the delay sheet for Sep
 Write proper walkthrough of features and usage
 
 ### Learnings
