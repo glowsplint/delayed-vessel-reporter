@@ -406,8 +406,12 @@ class CMAExtractor(BaseExtractor):
         Loop over all tables -> dataframes
         Concatenates all these dataframes into one dataframe
         """
-        self.response_intermediate = [pd.read_html(
-            response) for response in self.response_jsons]
+        self.response_intermediate = []
+        for response in self.response_jsons:
+            try:
+                self.response_intermediate.append(pd.read_html(response))
+            except ValueError:
+                pass
         reverse_port_id = {v[0].split(
             ", ")[0]: k for k, v in self.port_id.items() if v is not None}
 
@@ -560,8 +564,12 @@ class ANLExtractor(BaseExtractor):
                         self.response_jsons.append(f.read())
 
     def extract(self):
-        self.response_intermediate = [pd.read_html(
-            response) for response in self.response_jsons]
+        self.response_intermediate = []
+        for response in self.response_jsons:
+            try:
+                self.response_intermediate.append(pd.read_html(response))
+            except ValueError:
+                pass
         reverse_port_id = {v[0].split(
             ", ")[0]: k for k, v in self.port_id.items() if v is not None}
 

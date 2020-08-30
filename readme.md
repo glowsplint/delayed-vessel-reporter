@@ -20,7 +20,7 @@ The script is written in a modular approach to increase ease of maintenance and 
 | --------- | --------- | --------------------------- | -------- |
 | G2OCEAN   | Completed | -                           | All      |
 | MSC ID    | Completed | GET to countryID API        | -        |
-| MSC       | Completed | GET to Schedules API        | 8        |
+| MSC       | Completed | GET to Schedules API        | 8 (12)   |
 | OOCL ID   | Completed | GET to locationID API       | -        |
 | OOCL      | Completed | POST to Schedules API       | 12       |
 | COSCO     | Completed | POST                        | 12       |
@@ -33,21 +33,24 @@ The script is written in a modular approach to increase ease of maintenance and 
 
 ### Sailing schedules
 
-1. MSC +4 weeks from 8 weeks
 2. CMA/ANL +6 weeks from 6 weeks
 3. Hamburg +6 weeks
 4. Modify all to get correct schedules
 
 5. Provide port pairs
-6. Extract port pairs as reduced_df
-7. reduced_df -> response_df
-8. Concat all response_df
-9. Output
+6. Read port pairs in **init** of every extractor
+7. Extract port pairs => reduced_df
+8. reduced_df -> response_df
+9. Concat all response_df
+10. Output
 
-### Testing
-
-Get everyone to check the delay sheet for Sep
-Write proper walkthrough of features and usage
+MSC - remove port pair limit
+OOCL - fix routing, remove port pair limit
+Hamburg - remove port pair limit
+ANL
+COSCO
+CMA
+ONE
 
 ### Learnings
 
