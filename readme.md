@@ -24,33 +24,12 @@ The script is written in a modular approach to increase ease of maintenance and 
 | OOCL ID   | Completed | GET to locationID API       | -        |
 | OOCL      | Completed | POST to Schedules API       | 12       |
 | COSCO     | Completed | POST                        | 12       |
-| HAMBURG   | Completed | GET direct                  | 6        |
-| ANL       | Completed | GET with pd.read_html       | 6        |
-| CMA       | Completed | GET with pd.read_html       | 6        |
+| HAMBURG   | Completed | GET direct                  | 12       |
+| ANL       | Completed | GET with pd.read_html       | 12       |
+| CMA       | Completed | GET with pd.read_html       | 12       |
 | ONE       | Completed | POST                        | 12       |
 | HAPAG     | N/A       | Unable - Dynamic JS loading | -        |
 | EVERGREEN | N/A       | Unable - CAPTCHA            | -        |
-
-### Sailing schedules
-
-2. CMA/ANL +6 weeks from 6 weeks
-3. Hamburg +6 weeks
-4. Modify all to get correct schedules
-
-5. Provide port pairs
-6. Read port pairs in **init** of every extractor
-7. Extract port pairs => reduced_df
-8. reduced_df -> response_df
-9. Concat all response_df
-10. Output
-
-MSC - remove port pair limit
-OOCL - fix routing, remove port pair limit
-Hamburg - remove port pair limit
-ANL
-COSCO
-CMA
-ONE
 
 ### Learnings
 

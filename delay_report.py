@@ -86,8 +86,7 @@ class ONEExtractor(BaseExtractor):
             url = "https://ecomm.one-line.com/ecom/CUP_HOM_3001GS.do"
 
             today = datetime.today().strftime('%Y-%m-%d')
-            last_day = datetime.today().replace(
-                month=datetime.today().month+3).strftime('%Y-%m-%d')
+            last_day = (datetime.today() + timedelta(weeks=12)).strftime('%Y-%m-%d')
 
             payload = f'f_cmd=3&por_cd={pol_name}&del_cd={pod_name}&rcv_term_cd=Y&de_term_cd=Y&frm_dt={today}&to_dt={last_day}&ts_ind=&skd_tp=L'
             headers = {
@@ -1193,7 +1192,7 @@ class DelayReport:
 
     def run(self, carrier_name: str, extractor_name: str, extractor_class: BaseExtractor):
         if self.config.get(f'run_{carrier_name.lower()}'):
-            try:
+            if self.config.get('debug_mode'):
                 setattr(self, extractor_name, extractor_class(
                     self.clean_delay_sheet, self.interval, self.carrier_mapping))
                 getattr(self, extractor_name).get_location_id()
@@ -1204,9 +1203,22 @@ class DelayReport:
                 getattr(self, extractor_name).extract()
                 self.main_delay_sheet.update(
                     getattr(self, extractor_name).delay_sheet)
-            except:
-                print(
-                    f'There was an error with the {carrier_name} component. Ignoring and continuing...')
+            else:
+                try:
+                    setattr(self, extractor_name, extractor_class(
+                        self.clean_delay_sheet, self.interval, self.carrier_mapping))
+                    getattr(self, extractor_name).get_location_id()
+                    getattr(self, extractor_name).prepare()
+                    print(
+                        f'Extracting {carrier_name} information...')
+                    getattr(self, extractor_name).call_api()
+                    getattr(self, extractor_name).extract()
+                    self.main_delay_sheet.update(
+                        getattr(self, extractor_name).delay_sheet)
+                except:
+                    print(
+                        f'There was an error with the {carrier_name} component. Ignoring and continuing...')
+
 
     def calculate_deltas(self):
         date_columns = ['ETD Date', 'Disport ETA', 'BOL Date',
